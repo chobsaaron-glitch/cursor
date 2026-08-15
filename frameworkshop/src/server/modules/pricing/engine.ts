@@ -41,13 +41,23 @@ export interface PricingMatrix {
 
 export interface PricingRule {
   method: PricingMethodName;
-  /** Multiplier (COST_MULTIPLIER) or percent (MARKUP). */
+  /**
+   * Multiplier (COST_MULTIPLIER), percent (MARKUP) or — for CHOP / JOIN — the
+   * multiplier applied to material cost to obtain the base charge before the
+   * per-cut and per-join tariffs.
+   */
   factor?: number | null;
   /** Base tariff in kopecks — per metre, per m², per united inch, per piece… */
   amount?: number | null;
   chopPrice?: number | null;
   joinPrice?: number | null;
   minPrice?: number | null;
+  /**
+   * Cost floor: the retail price is never allowed below `cost * minMarkup`.
+   * Flat tariffs (per m², matrices) would otherwise sell premium materials
+   * such as museum glass at a loss.
+   */
+  minMarkup?: number | null;
   /** Rounding step in kopecks; 100 rounds to whole roubles. */
   roundTo?: number | null;
   formulaExpression?: string | null;
@@ -181,6 +191,16 @@ export function lookupMatrix(matrix: PricingMatrix, dims: PricingDimensions): nu
   return matrix.roundUp && sorted.length > 0 ? sorted[sorted.length - 1].price : null;
 }
 
+/**
+ * Material charge underlying chop and join pricing. Workshops either resell the
+ * moulding at a flat tariff per metre or mark up whatever that particular stick
+ * cost them; the per-cut and per-join tariffs are added on top either way.
+ */
+function chopJoinBase(rule: PricingRule, cost: number, lengthM: number): number {
+  if (rule.factor != null && rule.factor > 0) return multiply(cost, rule.factor);
+  return multiply(rule.amount ?? 0, lengthM);
+}
+
 /** Gross retail in kopecks, before minimum charge, rounding and discount. */
 function computeRetail(input: PricingInput, rule: PricingRule, notes: string[]): number {
   const dims = input.dimensions ?? {};
@@ -206,14 +226,14 @@ function computeRetail(input: PricingInput, rule: PricingRule, notes: string[]):
     }
 
     case 'CHOP': {
-      const base = multiply(rule.amount ?? 0, lengthM);
-      return base + (rule.chopPrice ?? 0) * (dims.cuts ?? 0);
+      return chopJoinBase(rule, cost, lengthM) + (rule.chopPrice ?? 0) * (dims.cuts ?? 0);
     }
 
     case 'JOIN': {
-      const base = multiply(rule.amount ?? 0, lengthM);
       return (
-        base + (rule.chopPrice ?? 0) * (dims.cuts ?? 0) + (rule.joinPrice ?? 0) * (dims.joins ?? 0)
+        chopJoinBase(rule, cost, lengthM) +
+        (rule.chopPrice ?? 0) * (dims.cuts ?? 0) +
+        (rule.joinPrice ?? 0) * (dims.joins ?? 0)
       );
     }
 
@@ -270,6 +290,16 @@ export function calculatePrice(input: PricingInput): PriceResult {
   if (minimum > 0 && retail < minimum) {
     retail = minimum;
     notes.push('Применена минимальная стоимость позиции.');
+  }
+
+  if (rule.minMarkup != null && rule.minMarkup > 0) {
+    const floor = multiply(cost, rule.minMarkup);
+    if (retail < floor) {
+      retail = floor;
+      notes.push(
+        `Цена поднята до минимальной наценки ×${round2(rule.minMarkup)} к себестоимости.`,
+      );
+    }
   }
 
   const step = rule.roundTo ?? 0;

@@ -695,6 +695,8 @@ model PriceRule {
   joinPrice      Int?
   /// Minimum charge in kopecks.
   minPrice       Int?
+  /// Cost floor: retail is never allowed below `cost * minMarkup`.
+  minMarkup      Float?
   /// Rounding step in kopecks (100 = round to whole roubles).
   roundTo        Int           @default(100)
   formulaId      String?

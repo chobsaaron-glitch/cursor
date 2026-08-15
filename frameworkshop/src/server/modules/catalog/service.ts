@@ -61,6 +61,7 @@ function toPricingRule(item: CatalogItemWithSpecs): PricingRule | null {
     chopPrice: rule.chopPrice ?? item.moulding?.chopPrice ?? null,
     joinPrice: rule.joinPrice ?? item.moulding?.joinPrice ?? null,
     minPrice: rule.minPrice,
+    minMarkup: rule.minMarkup,
     roundTo: rule.roundTo,
     formulaExpression: rule.formula?.expression ?? null,
     matrix: rule.matrix

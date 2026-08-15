@@ -66,6 +66,58 @@ describe('pricing engine — methods', () => {
     expect(result.retailPrice).toBe(roubles(3888 + 200 + 300));
   });
 
+  it('join can mark up the actual cost of the stick instead of a flat metre rate', () => {
+    const result = calculatePrice({
+      quantity: 3.24,
+      unitCost: roubles(400),
+      rule: {
+        method: 'JOIN',
+        factor: 2.5,
+        chopPrice: roubles(50),
+        joinPrice: roubles(75),
+        roundTo: 0,
+      },
+      dimensions: { lengthMm: 3240, cuts: 4, joins: 4 },
+    });
+    // 3.24 m × 400 ₽ = 1296 ₽ of material, ×2.5, plus 4 cuts and 4 corners.
+    expect(result.retailPrice).toBe(roubles(3240 + 200 + 300));
+    expect(result.margin).toBeGreaterThan(0);
+  });
+
+  it('the cost floor keeps flat tariffs from selling premium material at a loss', () => {
+    const museumGlass = {
+      quantity: 0.2666,
+      unitCost: roubles(8735),
+      dimensions: { areaM2: 0.2666 },
+      roundTo: 0,
+    };
+
+    const unguarded = calculatePrice({
+      ...museumGlass,
+      rule: { method: 'PER_AREA', amount: roubles(3200), roundTo: 0 },
+    });
+    expect(unguarded.margin).toBeLessThan(0);
+
+    const guarded = calculatePrice({
+      ...museumGlass,
+      rule: { method: 'PER_AREA', amount: roubles(3200), minMarkup: 2.2, roundTo: 0 },
+    });
+    expect(guarded.retailPrice).toBe(Math.round(guarded.cost * 2.2));
+    expect(guarded.marginPercent).toBeGreaterThan(50);
+    expect(guarded.notes.join(' ')).toContain('минимальной наценки');
+  });
+
+  it('the cost floor leaves an already profitable price untouched', () => {
+    const result = calculatePrice({
+      quantity: 1,
+      unitCost: roubles(100),
+      rule: { method: 'PER_AREA', amount: roubles(1000), minMarkup: 2, roundTo: 0 },
+      dimensions: { areaM2: 1 },
+    });
+    expect(result.retailPrice).toBe(roubles(1000));
+    expect(result.notes).toHaveLength(0);
+  });
+
   it('price per square metre', () => {
     const result = calculatePrice({
       quantity: 1,

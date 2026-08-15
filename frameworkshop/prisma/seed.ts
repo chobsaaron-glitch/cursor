@@ -186,13 +186,13 @@ async function main() {
   });
 
   const priceRuleSeeds = [
-    { key: 'moulding_standard', name: 'Багет — цена за метр + резка и сборка', method: 'JOIN' as const, amount: roubles(0), chopPrice: roubles(50), joinPrice: roubles(75), factor: null, minPrice: roubles(600) },
-    { key: 'moulding_wide', name: 'Багет широкий — формула по себестоимости', method: 'FORMULA' as const, formulaId: tieredFormula.id, minPrice: roubles(900) },
-    { key: 'matboard', name: 'Паспарту — по площади', method: 'PER_AREA' as const, amount: roubles(2400), minPrice: roubles(650) },
-    { key: 'glazing', name: 'Остекление — по площади', method: 'PER_AREA' as const, amount: roubles(3200), minPrice: roubles(450) },
+    { key: 'moulding_standard', name: 'Багет — наценка ×2,6 + резка и сборка', method: 'JOIN' as const, factor: 2.6, chopPrice: roubles(50), joinPrice: roubles(75), minPrice: roubles(600) },
+    { key: 'moulding_wide', name: 'Багет широкий — формула по себестоимости', method: 'FORMULA' as const, formulaId: tieredFormula.id, minPrice: roubles(900), minMarkup: 2.6 },
+    { key: 'matboard', name: 'Паспарту — по площади', method: 'PER_AREA' as const, amount: roubles(2400), minPrice: roubles(650), minMarkup: 2.2 },
+    { key: 'glazing', name: 'Остекление — по площади', method: 'PER_AREA' as const, amount: roubles(3200), minPrice: roubles(450), minMarkup: 2.2 },
     { key: 'sheet_standard', name: 'Листовые материалы — коэффициент 3', method: 'COST_MULTIPLIER' as const, factor: 3, minPrice: roubles(250) },
     { key: 'hardware', name: 'Фурнитура — наценка 180 %', method: 'MARKUP' as const, factor: 180, minPrice: roubles(30) },
-    { key: 'ready_frame', name: 'Готовая рама — ценовая матрица', method: 'MATRIX' as const, matrixId: sizeMatrix.id },
+    { key: 'ready_frame', name: 'Готовая рама — ценовая матрица', method: 'MATRIX' as const, matrixId: sizeMatrix.id, minMarkup: 2.5 },
     { key: 'united_inch', name: 'Оформление по united inch', method: 'UNITED_INCH' as const, amount: roubles(120) },
   ];
 
@@ -208,6 +208,7 @@ async function main() {
         chopPrice: 'chopPrice' in seed ? seed.chopPrice : null,
         joinPrice: 'joinPrice' in seed ? seed.joinPrice : null,
         minPrice: 'minPrice' in seed ? (seed.minPrice ?? null) : null,
+        minMarkup: 'minMarkup' in seed ? seed.minMarkup : null,
         roundTo: 100,
         formulaId: 'formulaId' in seed ? seed.formulaId : null,
         matrixId: 'matrixId' in seed ? seed.matrixId : null,
