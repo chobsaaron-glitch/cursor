@@ -242,6 +242,21 @@ export function EmptyState({ title, description }: { title: string; description?
   );
 }
 
+/** Shown instead of a screen the current role may not see. */
+export function AccessDenied({ title, description }: { title: string; description?: string }) {
+  return (
+    <>
+      <PageHeader title={title} />
+      <Card>
+        <EmptyState
+          title="Недостаточно прав"
+          description={description ?? 'У вашей роли нет доступа к этому разделу.'}
+        />
+      </Card>
+    </>
+  );
+}
+
 export function PageHeader({
   title,
   description,

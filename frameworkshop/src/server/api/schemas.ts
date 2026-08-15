@@ -15,14 +15,16 @@ export const marginsSchema = z.object({
   bottomMm: mm,
 });
 
+export const glazingPositionSchema = z.enum(['INNER', 'BETWEEN', 'OUTER']);
+
 export const matLayerSchema = z.object({
   layer: z.number().int().min(1).max(7),
-  catalogItemId: z.string().min(1),
+  catalogItemId: z.string().min(1).nullable().optional(),
   margins: marginsSchema.optional(),
   revealMm: z.number().min(0).max(200).optional(),
   overlapMm: z.number().min(0).max(100).optional(),
-  shape: z.enum(['RECTANGLE', 'OVAL', 'CIRCLE', 'ARCH', 'CUSTOM']).optional(),
   openings: z.number().int().min(1).max(50).optional(),
+  shape: z.enum(['RECT', 'OVAL', 'CIRCLE', 'ARCH', 'BEVELLED_CORNERS', 'CUSTOM']).optional(),
   vGroove: z.boolean().optional(),
   reverseBevel: z.boolean().optional(),
   decorativeLine: z.boolean().optional(),
@@ -31,64 +33,63 @@ export const matLayerSchema = z.object({
 export const mouldingLayerSchema = z.object({
   role: z.enum(['INNER', 'OUTER']),
   catalogItemId: z.string().min(1),
-  allowanceMm: z.number().min(0).max(50).optional(),
+  widthMm: z.number().min(0).max(500).optional(),
+  rabbetOverlapMm: z.number().min(0).max(50).optional(),
+  clearanceMm: z.number().min(0).max(50).optional(),
+});
+
+const catalogRefSchema = z.object({
+  catalogItemId: z.string().min(1),
+  quantity: z.number().min(0).max(999).optional(),
 });
 
 export const framingSpecSchema = z.object({
   artworkWidthMm: mm.min(1),
   artworkHeightMm: mm.min(1),
+  quantity: z.number().int().min(1).max(999).optional(),
   clearanceMm: z.number().min(0).max(50).optional(),
   mats: z.array(matLayerSchema).max(7).optional(),
   mouldings: z.array(mouldingLayerSchema).max(2).optional(),
   glazing: z
     .object({
       catalogItemId: z.string().min(1),
-      position: z.enum(['INNER_FRAME', 'BETWEEN_FRAMES', 'OUTER_FRAME']).optional(),
+      position: glazingPositionSchema.optional(),
       spacerMm: z.number().min(0).max(100).optional(),
     })
+    .nullable()
     .optional(),
-  backing: z.object({ catalogItemId: z.string().min(1) }).optional(),
+  glazingPosition: glazingPositionSchema.optional(),
+  backing: z.object({ catalogItemId: z.string().min(1) }).nullable().optional(),
   mounting: z
     .object({
       method: z.enum([
         'NONE',
-        'HAND_STRETCH',
+        'HINGE',
+        'DRY_MOUNT',
         'FOAM_MOUNT',
+        'STRETCH_MANUAL',
+        'STRETCH_FOAM',
         'STRETCH_SUBFRAME',
         'STRETCH_GALLERY',
-        'LAMINATE',
-        'OTHER',
+        'FLOAT_MOUNT',
       ]),
-      catalogItemId: z.string().min(1).optional(),
-      boardCatalogItemId: z.string().min(1).optional(),
+      catalogItemId: z.string().min(1).nullable().optional(),
+      boardCatalogItemId: z.string().min(1).nullable().optional(),
     })
+    .nullable()
     .optional(),
-  subframe: z.object({ catalogItemId: z.string().min(1) }).optional(),
-  hardware: z
-    .array(
-      z.object({
-        catalogItemId: z.string().min(1),
-        quantity: z.number().min(0).max(999).optional(),
-      }),
-    )
+  subframe: z
+    .object({
+      catalogItemId: z.string().min(1),
+      wrapMm: z.number().min(0).max(200).optional(),
+    })
+    .nullable()
     .optional(),
+  hardware: z.array(catalogRefSchema).optional(),
   extras: z
-    .array(
-      z.object({
-        catalogItemId: z.string().min(1),
-        quantity: z.number().min(0).max(999).optional(),
-        note: z.string().max(500).optional(),
-      }),
-    )
+    .array(catalogRefSchema.extend({ note: z.string().max(500).optional() }))
     .optional(),
-  services: z
-    .array(
-      z.object({
-        catalogItemId: z.string().min(1),
-        quantity: z.number().min(0).max(999).optional(),
-      }),
-    )
-    .optional(),
+  services: z.array(catalogRefSchema).optional(),
   notes: z.string().max(2000).optional(),
 });
 
@@ -106,10 +107,10 @@ export const customerInputSchema = z.object({
   whatsapp: z.string().max(100).optional().nullable(),
   address: z.string().max(300).optional().nullable(),
   city: z.string().max(120).optional().nullable(),
-  birthday: z.coerce.date().optional().nullable(),
+  birthDate: z.coerce.date().optional().nullable(),
   sourceId: z.string().optional().nullable(),
   managerId: z.string().optional().nullable(),
-  notes: z.string().max(2000).optional().nullable(),
+  note: z.string().max(2000).optional().nullable(),
   marketingConsent: z.boolean().optional(),
   discountPercent: z.number().min(0).max(100).optional(),
 });
@@ -212,4 +213,14 @@ export const catalogSearchSchema = z.object({
   orderBy: z.enum(['name', 'sku', 'price', 'updated']).optional(),
   take: z.coerce.number().int().min(1).max(200).optional(),
   skip: z.coerce.number().int().min(0).optional(),
+});
+
+export const createInvoiceSchema = z.object({
+  orderId: z.string().min(1),
+  dueAt: z.coerce.date().optional().nullable(),
+  note: z.string().max(500).optional().nullable(),
+});
+
+export const workItemCommentSchema = z.object({
+  body: z.string().min(1, 'Введите комментарий').max(2000),
 });

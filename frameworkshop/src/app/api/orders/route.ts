@@ -9,7 +9,7 @@ const querySchema = z.object({
   commercialStatus: z.string().optional(),
   productionStatus: z.string().optional(),
   paymentStatus: z.string().optional(),
-  overdue: z.enum(['true', 'false']).optional(),
+  overdueOnly: z.enum(['true', 'false']).optional(),
   take: z.coerce.number().int().min(1).max(200).optional(),
   skip: z.coerce.number().int().min(0).optional(),
 });
@@ -19,7 +19,7 @@ export const GET = route(
   async ({ context, query }) =>
     listOrders(context.user.organizationId, {
       ...query,
-      overdue: query.overdue === 'true',
+      overdueOnly: query.overdueOnly === 'true',
     } as Parameters<typeof listOrders>[1]),
 );
 

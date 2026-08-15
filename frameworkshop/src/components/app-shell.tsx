@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   BarChart3,
   Boxes,
@@ -49,6 +49,28 @@ export function AppShell({ user, children }: { user: SessionUser; children: Reac
   const [menuOpen, setMenuOpen] = useState(false);
 
   const items = NAV.filter((item) => allowed(user, item.permission));
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const typing =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+      if (typing) return;
+
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'n') {
+        if (!allowed(user, 'orders.create')) return;
+        event.preventDefault();
+        router.push('/orders/new');
+      }
+    }
+
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [router, user]);
 
   async function signOut() {
     await api.post('/api/auth/logout');
