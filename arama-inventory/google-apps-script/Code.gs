@@ -145,7 +145,8 @@ function writeCatalog_(items) {
       item.updatedAt || new Date().toISOString(),
     ]
   })
-  sheet.getRange(2, 1, rows.length + 1, 5).setValues(rows)
+  // getRange(row, column, numRows, numColumns) — 3-й параметр это ЧИСЛО строк
+  sheet.getRange(2, 1, rows.length, 5).setValues(rows)
 }
 
 function readMoldings_() {
