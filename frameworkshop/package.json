@@ -5,6 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:integration": "vitest run tests/integration",
     "dev": "next dev",
     "build": "next build",
     "start": "next start",

@@ -151,6 +151,18 @@ export async function recordPayment(context: AppContext, input: RecordPaymentInp
 
     if (!customerId) throw new DomainError('Не указан клиент для платежа.');
 
+    // At the counter the clerk takes money for an order, not "against invoice
+    // #123". Attach the payment to that order's open invoice so the invoice
+    // balance can never drift away from the order balance.
+    let invoiceId = input.invoiceId ?? null;
+    if (!invoiceId && orderId) {
+      const openInvoice = await tx.invoice.findFirst({
+        where: { organizationId, orderId, status: { not: 'VOIDED' } },
+        orderBy: { createdAt: 'desc' },
+      });
+      invoiceId = openInvoice?.id ?? null;
+    }
+
     const kind = input.kind ?? 'PAYMENT';
     if (kind === 'REFUND') {
       const order = orderId
@@ -170,7 +182,7 @@ export async function recordPayment(context: AppContext, input: RecordPaymentInp
         number,
         customerId,
         orderId,
-        invoiceId: input.invoiceId ?? null,
+        invoiceId,
         kind,
         state: 'COMPLETED',
         method: input.method,
@@ -181,7 +193,7 @@ export async function recordPayment(context: AppContext, input: RecordPaymentInp
       },
     });
 
-    if (input.invoiceId) await syncInvoiceBalance(tx, input.invoiceId);
+    if (invoiceId) await syncInvoiceBalance(tx, invoiceId);
     if (orderId) await recalcOrderTotals(tx, orderId);
 
     await writeAudit(tx, context, {

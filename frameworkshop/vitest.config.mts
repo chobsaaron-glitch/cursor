@@ -6,6 +6,7 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     include: ['tests/**/*.test.ts'],
+    setupFiles: ['tests/setup.ts'],
     // Integration tests share one PostgreSQL database, so they must not race.
     fileParallelism: false,
     hookTimeout: 60_000,
