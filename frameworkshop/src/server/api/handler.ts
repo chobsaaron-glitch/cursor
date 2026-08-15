@@ -161,7 +161,7 @@ export function route<TBody = undefined, TQuery = undefined>(
 ) {
   return async (
     request: NextRequest,
-    routeContext?: { params?: Promise<Record<string, string>> },
+    routeContext: { params: Promise<Record<string, string>> },
   ): Promise<NextResponse> => {
     try {
       if (options.rateLimit && rateLimited(await clientKey(request), options.rateLimit)) {
