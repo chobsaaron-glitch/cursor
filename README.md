@@ -1,21 +1,13 @@
-# Cursor
+# А-рама
 
-Creating new posts on [our forum](https://forum.cursor.com/) for bugs or feature requests is much appreciated!
+Приложение для инвентаризации багетных реек мастерской **«А-рама»**.
 
-## Getting Started
+Исходный код: каталог [`arama-inventory`](./arama-inventory).
 
-Head over to [our website](https://cursor.com/) to download Cursor.
+```bash
+cd arama-inventory
+npm install
+npm run dev
+```
 
-## Features
-
-[See here](https://cursor.com/features) for more info on Cursor's features.
-
-## Resources
-
-- Download: https://cursor.com
-- Features: https://cursor.com/features
-- Community forum: https://forum.cursor.com/
-
-## Security
-
-Please do not report security vulnerabilities through public issues. See [SECURITY.md](SECURITY.md) and email [security-reports@cursor.com](mailto:security-reports@cursor.com).
+Установка на Android: откройте собранное приложение в Chrome → «Установить приложение». Подробности — в [arama-inventory/README.md](./arama-inventory/README.md).
