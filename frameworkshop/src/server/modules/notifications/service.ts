@@ -83,7 +83,6 @@ class ConsoleProvider implements NotificationProvider {
 
   async send(message: OutboundMessage) {
     const reference = `console-${this.channel}-${Date.now()}`;
-    // eslint-disable-next-line no-console
     console.info(`[${this.channel}] → ${message.to}: ${message.body}`);
     return { delivered: true, reference };
   }

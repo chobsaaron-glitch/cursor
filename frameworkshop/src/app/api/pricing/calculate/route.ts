@@ -32,7 +32,14 @@ export const POST = route(
     if (!hasPermission(context.user.permissions, 'orders.view_cost')) {
       return {
         calculation: result.calculation,
-        components: result.components.map(({ unitCost, cost, ...rest }) => rest),
+        components: result.components.map((component) => ({
+          group: component.group,
+          name: component.name,
+          role: component.role,
+          quantity: component.quantity,
+          unit: component.unit,
+          price: component.price,
+        })),
         totals: {
           subtotal: result.totals.subtotal,
           discountAmount: result.totals.discountAmount,
