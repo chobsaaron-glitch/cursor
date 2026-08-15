@@ -202,7 +202,7 @@ function writeMoldings_(items) {
       item.updatedAt || new Date().toISOString(),
     ]
   })
-  sheet.getRange(2, 1, rows.length + 1, 9).setValues(rows)
+  sheet.getRange(2, 1, rows.length, 9).setValues(rows)
 }
 
 function mergeByKey_(serverItems, clientItems, keyName) {
