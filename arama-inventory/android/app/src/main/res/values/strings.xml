@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">А-рама</string>
+    <string name="title_activity_main">А-рама</string>
+    <string name="package_name">ru.arama.inventory</string>
+    <string name="custom_url_scheme">ru.arama.inventory</string>
+</resources>
