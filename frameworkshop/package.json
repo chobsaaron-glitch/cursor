@@ -15,7 +15,8 @@
     "postinstall": "prisma generate",
     "seed": "tsx prisma/seed.ts",
     "db:migrate": "prisma migrate deploy",
-    "db:reset": "prisma migrate reset --force"
+    "db:reset": "prisma migrate reset --force",
+    "installer:windows": "bash scripts/windows/build-installer.sh"
   },
   "keywords": [],
   "author": "",

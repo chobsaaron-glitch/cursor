@@ -5,6 +5,9 @@ build/
 dist/
 coverage/
 storage/
+.fw-installed
+.fw-server.pid
+dist/
 *.tsbuildinfo
 next-env.d.ts
 .env

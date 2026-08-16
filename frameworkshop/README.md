@@ -33,7 +33,20 @@ CRM + калькулятор оформления + склад + произво�
 TypeScript, Next.js 15, React 19, PostgreSQL, Prisma 7, Tailwind CSS 4, Zod,
 Vitest.
 
-## Запуск
+## Windows: установщик
+
+На Windows можно поставить программу как обычное приложение.
+
+1. Скачайте `frameworkshop/installer/FrameWorkshop-Setup.exe` из репозитория (или соберите `npm run installer:windows`).
+   Файл сборки также пишется в `frameworkshop/dist/FrameWorkshop-Setup.exe`.
+2. На ПК запустите установщик. Он копирует программу в `%LOCALAPPDATA%\FrameWorkshop` и ставит Node.js / PostgreSQL при необходимости.
+3. Ярлык **FrameWorkshop** на рабочем столе открывает http://localhost:3000.
+
+Без установщика: скопируйте папку `frameworkshop` на ПК и дважды щёлкните `Установить.bat`.
+
+Нужны права на установку Node.js и PostgreSQL (winget). Пароль суперпользователя PostgreSQL спросят при первой установке.
+
+## Запуск с исходников
 
 Нужны Node 20+ и PostgreSQL 16.
 
