@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
-  adjustQuantity,
   deleteCatalogItem,
   deleteMolding,
   exportAll,
@@ -31,7 +30,6 @@ const emptyForm = {
   cell: '',
   article: '',
   lengthCm: '',
-  quantity: '1',
   photoUrl: '',
   comment: '',
   createdAt: '',
@@ -94,6 +92,83 @@ function Thumb({ url, article }: { url: string; article: string }) {
         referrerPolicy="no-referrer"
         onError={() => setFailed(true)}
       />
+    </div>
+  )
+}
+
+function ArticleSuggest({
+  value,
+  catalog,
+  onChange,
+}: {
+  value: string
+  catalog: CatalogItem[]
+  onChange: (article: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const q = value.trim().toLowerCase()
+
+  const matches = q
+    ? catalog
+        .map((item) => {
+          const art = item.article.toLowerCase()
+          const name = item.name.toLowerCase()
+          let score = 0
+          if (art === q) score = 3
+          else if (art.startsWith(q)) score = 2
+          else if (art.includes(q) || name.includes(q)) score = 1
+          else return null
+          return { item, score }
+        })
+        .filter((row): row is { item: CatalogItem; score: number } => row !== null)
+        .sort((a, b) => b.score - a.score || a.item.article.localeCompare(b.item.article, 'ru'))
+        .slice(0, 20)
+        .map((row) => row.item)
+    : []
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [])
+
+  return (
+    <div className="suggest-wrap" ref={wrapRef}>
+      <input
+        id="article"
+        autoComplete="off"
+        placeholder="Код багета"
+        value={value}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          onChange(e.target.value)
+          setOpen(true)
+        }}
+        required
+      />
+      {open && matches.length > 0 && (
+        <ul className="suggest-list" role="listbox">
+          {matches.map((item) => (
+            <li key={item.article}>
+              <button
+                type="button"
+                className="suggest-item"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onChange(item.article)
+                  setOpen(false)
+                }}
+              >
+                <strong>{item.article}</strong>
+                {item.name && <span>{item.name}</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
@@ -191,7 +266,6 @@ export default function App() {
             cell: item.cell,
             article: item.article,
             lengthCm: String(item.lengthCm),
-            quantity: String(item.quantity),
             photoUrl: item.photoUrl,
             comment: item.comment,
             createdAt: item.createdAt.slice(0, 10),
@@ -300,7 +374,6 @@ export default function App() {
       setFormError('Укажите длину рейки в сантиметрах')
       return
     }
-    const quantity = Math.max(0, Math.floor(Number(form.quantity) || 0))
     const createdAt = form.createdAt
       ? new Date(`${form.createdAt}T12:00:00`).toISOString()
       : undefined
@@ -310,7 +383,7 @@ export default function App() {
       cell: form.cell,
       article: form.article,
       lengthCm,
-      quantity,
+      quantity: 1,
       photoUrl: form.photoUrl,
       comment: form.comment,
       createdAt,
@@ -370,22 +443,6 @@ export default function App() {
     if (!confirm(`Удалить артикул ${article} из справочника?`)) return
     await deleteCatalogItem(article)
     await refresh()
-  }
-
-  async function onAdjust(id: string, delta: number) {
-    const updated = await adjustQuantity(id, delta)
-    if (updated) {
-      setDetail(updated)
-      await refresh()
-      if (syncSettings.autoSync && syncSettings.scriptUrl) {
-        try {
-          await syncBidirectional()
-          await refresh()
-        } catch {
-          /* ignore */
-        }
-      }
-    }
   }
 
   async function onExport() {
@@ -496,11 +553,11 @@ export default function App() {
           <div className="stats-row">
             <div className="stat">
               <strong>{stats.skuCount}</strong>
-              <span>позиций</span>
+              <span>реек</span>
             </div>
             <div className="stat">
-              <strong>{stats.totalPieces}</strong>
-              <span>реек</span>
+              <strong>{stats.cells}</strong>
+              <span>ячеек</span>
             </div>
             <div className="stat">
               <strong>{catalog.length}</strong>
@@ -566,10 +623,6 @@ export default function App() {
                       : ''}
                   </p>
                 </div>
-                <div className="qty-badge">
-                  {item.quantity}
-                  <small>шт</small>
-                </div>
               </button>
             ))}
           </section>
@@ -599,49 +652,28 @@ export default function App() {
           </div>
 
           <form className="form" onSubmit={onSubmit}>
-            <div className="field-row">
-              <div className="field">
-                <label htmlFor="cell">Ячейка</label>
-                <input
-                  id="cell"
-                  inputMode="text"
-                  placeholder="Напр. A-12"
-                  value={form.cell}
-                  onChange={(e) => setForm((f) => ({ ...f, cell: e.target.value }))}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="quantity">Количество</label>
-                <input
-                  id="quantity"
-                  inputMode="numeric"
-                  value={form.quantity}
-                  onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
-                />
-              </div>
+            <div className="field">
+              <label htmlFor="cell">Ячейка</label>
+              <input
+                id="cell"
+                inputMode="text"
+                placeholder="Напр. A-12"
+                value={form.cell}
+                onChange={(e) => setForm((f) => ({ ...f, cell: e.target.value }))}
+                required
+              />
             </div>
 
             <div className="field">
               <label htmlFor="article">Артикул</label>
-              <input
-                id="article"
-                list="catalog-articles"
-                placeholder="Код багета"
+              <ArticleSuggest
                 value={form.article}
-                onChange={(e) => {
+                catalog={catalog}
+                onChange={(article) => {
                   photoManualRef.current = false
-                  setForm((f) => ({ ...f, article: e.target.value }))
+                  setForm((f) => ({ ...f, article }))
                 }}
-                required
               />
-              <datalist id="catalog-articles">
-                {catalog.map((c) => (
-                  <option key={c.article} value={c.article}>
-                    {c.name || c.article}
-                  </option>
-                ))}
-              </datalist>
               {catalogHint && <p className="field-hint">{catalogHint}</p>}
             </div>
 
@@ -727,16 +759,6 @@ export default function App() {
           <h1>{detail.article}</h1>
           <p className="detail-line">Ячейка {detail.cell}</p>
           <p className="detail-line">{formatLength(detail.lengthCm)}</p>
-
-          <div className="qty-controls" aria-label="Остаток">
-            <button type="button" onClick={() => onAdjust(detail.id, -1)} aria-label="Минус">
-              −
-            </button>
-            <div className="qty-value">{detail.quantity} шт</div>
-            <button type="button" onClick={() => onAdjust(detail.id, 1)} aria-label="Плюс">
-              +
-            </button>
-          </div>
 
           <div className="kv">
             <div className="kv-row">

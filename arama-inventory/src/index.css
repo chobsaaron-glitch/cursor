@@ -237,7 +237,7 @@ img {
 
 .item-row {
   display: grid;
-  grid-template-columns: 72px 1fr auto;
+  grid-template-columns: 72px 1fr;
   gap: 12px;
   align-items: center;
   padding: 10px;
@@ -371,11 +371,14 @@ img {
   gap: 14px;
   animation: rise 0.5s ease 0.06s both;
   padding-bottom: 24px;
+  overflow: visible;
 }
 
 .field {
   display: grid;
   gap: 6px;
+  position: relative;
+  overflow: visible;
 }
 
 .field label {
@@ -384,6 +387,59 @@ img {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--muted);
+}
+
+.suggest-wrap {
+  position: relative;
+  z-index: 5;
+}
+
+.suggest-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 50;
+  margin: 0;
+  padding: 6px 0;
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+  background: #f3ebdd;
+  border: 1px solid rgba(42, 33, 24, 0.16);
+  border-radius: 14px;
+  box-shadow: 0 16px 32px rgba(42, 33, 24, 0.28);
+}
+
+.suggest-item {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  background: #f3ebdd;
+  color: var(--ink);
+  border: none;
+  border-radius: 0;
+}
+
+.suggest-item + .suggest-item,
+.suggest-list li + li .suggest-item {
+  border-top: 1px solid rgba(42, 33, 24, 0.08);
+}
+
+.suggest-item:hover,
+.suggest-item:active {
+  background: #efe4d0;
+}
+
+.suggest-item strong {
+  font-size: 0.98rem;
+}
+
+.suggest-item span {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
 }
 
 .field textarea {
