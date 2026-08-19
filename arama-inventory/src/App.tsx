@@ -17,6 +17,7 @@ import {
 } from './db'
 import { syncBidirectional, pullFromSheets, pushToSheets } from './sync'
 import type { CatalogItem, Filters, MoldingItem, SyncSettings, View } from './types'
+import { applyTheme, readStoredTheme, THEMES, type ThemeId } from './themes'
 import {
   filterMoldings,
   formatDate,
@@ -217,8 +218,13 @@ export default function App() {
   const [syncMessage, setSyncMessage] = useState('')
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [showInstall, setShowInstall] = useState(false)
+  const [theme, setTheme] = useState<ThemeId>(() => readStoredTheme())
   const fileRef = useRef<HTMLInputElement>(null)
   const photoManualRef = useRef(false)
+
+  useEffect(() => {
+    applyTheme(theme)
+  }, [theme])
 
   async function refresh() {
     const [all, cellList, catalogList, settings] = await Promise.all([
@@ -1068,10 +1074,31 @@ export default function App() {
             >
               <IconBack />
             </button>
-            <h2>Данные и установка</h2>
+            <h2>Настройки</h2>
           </div>
 
           <div className="form">
+            <p className="hint">Оформление приложения. Выбор сохраняется на этом телефоне.</p>
+            <div className="theme-grid">
+              {THEMES.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`theme-card ${theme === item.id ? 'active' : ''}`}
+                  onClick={() => setTheme(item.id)}
+                >
+                  <span
+                    className="theme-swatch"
+                    style={{
+                      background: `linear-gradient(135deg, ${item.swatchA}, ${item.swatchB})`,
+                    }}
+                  />
+                  <strong>{item.name}</strong>
+                  <span>{item.hint}</span>
+                </button>
+              ))}
+            </div>
+
             <p className="hint">
               Остатки и справочник хранятся на телефоне. Для обмена с компьютером используйте Google
               Таблицы или JSON-копию.
