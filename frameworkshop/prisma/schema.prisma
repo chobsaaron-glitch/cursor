@@ -1,0 +1,1772 @@
+// FrameWorkshop ERP — database schema
+//
+// Conventions
+//   * Money is stored as whole kopecks (Int). 18 500,00 ₽ => 1_850_000.
+//     Never store money as Float. Formatting happens in src/lib/money.ts.
+//   * Lengths are stored in millimetres (Int) — see src/lib/units.ts.
+//   * Material quantities are Float rounded to 4 decimals (round4) on write,
+//     which is 0,1 mm of a metre — enough precision without decimal drift.
+//   * Every business table carries organizationId (multi-tenant isolation).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum CustomerType {
+  PERSON
+  ENTREPRENEUR
+  COMPANY
+}
+
+/// Component groups — the single vocabulary shared by the catalog,
+/// work item components, inventory and reports.
+enum CatalogGroup {
+  MOULDING
+  MATBOARD
+  GLAZING
+  BACKING
+  MOUNTING
+  FABRIC
+  HARDWARE
+  FITTING
+  SUBFRAME
+  EXTRA
+  LABOUR
+  SUPPLY
+  PRINT
+  SERVICE
+}
+
+enum Unit {
+  MM
+  M
+  M2
+  SHEET
+  PIECE
+  LITRE
+  KG
+  PACK
+  MINUTE
+}
+
+enum PricingMethod {
+  COST_MULTIPLIER
+  MARKUP
+  PER_METER
+  CHOP
+  JOIN
+  PER_AREA
+  UNITED_INCH
+  PER_PIECE
+  FIXED
+  MATRIX
+  FORMULA
+}
+
+enum MatrixAxis {
+  SIZE
+  UNITED_INCH
+  AREA
+  PERIMETER
+  LENGTH
+}
+
+/// Commercial track of an order — never changed by a payment.
+enum CommercialStatus {
+  CALCULATION
+  QUOTE
+  CONFIRMED
+  CANCELLED
+}
+
+/// Production track of an order (aggregated from its work items).
+enum OrderProductionStatus {
+  WAITING
+  IN_PRODUCTION
+  READY
+  ISSUED
+}
+
+/// Payment track of an order — derived from payments, independent of the rest.
+enum OrderPaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  OVERPAID
+  REFUNDED
+}
+
+enum WorkItemStatus {
+  DRAFT
+  ESTIMATE
+  AWAITING_CONFIRMATION
+  CONFIRMED
+  AWAITING_MATERIALS
+  MATERIALS_READY
+  IN_PRODUCTION
+  QUALITY_CHECK
+  READY
+  ISSUED
+  CLOSED
+  CANCELLED
+}
+
+enum ProductionStage {
+  NEW
+  CONFIRMED
+  AWAITING_MATERIALS
+  MATERIALS_READY
+  CUTTING
+  ASSEMBLY
+  STRETCHING
+  MATTING
+  GLAZING
+  QUALITY_CONTROL
+  DONE
+  ISSUED
+}
+
+enum Priority {
+  NORMAL
+  HIGH
+  URGENT
+  CRITICAL
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  DONE
+  SKIPPED
+}
+
+enum InventoryTxType {
+  RECEIPT
+  ISSUE
+  WASTE
+  ADJUSTMENT
+  WRITE_OFF
+  RETURN
+  TRANSFER_IN
+  TRANSFER_OUT
+}
+
+enum ReservationStatus {
+  ACTIVE
+  RELEASED
+  CONSUMED
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  SENT
+  CONFIRMED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  VOIDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  SBP
+  BANK_ACCOUNT
+  OTHER
+}
+
+enum PaymentKind {
+  PAYMENT
+  REFUND
+}
+
+enum PaymentState {
+  COMPLETED
+  VOIDED
+}
+
+enum PhotoKind {
+  INTAKE
+  DEFECT
+  PROCESS
+  FINISHED
+  CUSTOMER_REFERENCE
+  DESIGN
+}
+
+enum CommunicationChannel {
+  PHONE
+  EMAIL
+  SMS
+  TELEGRAM
+  WHATSAPP
+  IN_PERSON
+  OTHER
+}
+
+enum CommunicationDirection {
+  IN
+  OUT
+}
+
+enum PayType {
+  HOURLY
+  PIECE
+  FIXED
+  MIXED
+}
+
+enum PayrollStatus {
+  OPEN
+  APPROVED
+  PAID
+}
+
+enum QualityResult {
+  PENDING
+  PASSED
+  FAILED
+}
+
+enum DocumentType {
+  ESTIMATE
+  QUOTE
+  ORDER
+  CONTRACT
+  INVOICE
+  ACT
+  RECEIPT
+  CARE_INSTRUCTIONS
+  HANDOVER
+  PRODUCTION_CARD
+  LABEL
+  MATERIAL_LIST
+  CUT_LIST
+  OPERATION_LIST
+}
+
+enum NotificationType {
+  NEW_ORDER
+  MATERIAL_SHORTAGE
+  MATERIAL_OUT_OF_STOCK
+  DUE_TOMORROW
+  DUE_TODAY
+  OVERDUE
+  ITEM_READY
+  QUALITY_FAILED
+  CUSTOMER_DEBT
+  PURCHASE_ORDER
+  SYSTEM
+}
+
+enum ImportMode {
+  INSERT
+  UPDATE
+  UPSERT
+  SYNC
+}
+
+enum ImportStatus {
+  DRAFT
+  VALIDATED
+  IMPORTED
+  FAILED
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy, users, permissions
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id             String   @id @default(cuid())
+  name           String
+  legalName      String?
+  inn            String?
+  kpp            String?
+  address        String?
+  phone          String?
+  email          String?
+  baseCurrency   String   @default("RUB")
+  locale         String   @default("ru-RU")
+  timezone       String   @default("Europe/Moscow")
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  branches            Branch[]
+  users               User[]
+  roles               Role[]
+  customers           Customer[]
+  customerSources     CustomerSource[]
+  catalogItems        CatalogItem[]
+  catalogCategories   CatalogCategory[]
+  priceRules          PriceRule[]
+  priceFormulas       PriceFormula[]
+  priceMatrices       PriceMatrix[]
+  taxRates            TaxRate[]
+  labourOperations    LabourOperation[]
+  frameTemplates      FrameTemplate[]
+  suppliers           Supplier[]
+  orders              CustomerOrder[]
+  workItems           WorkItem[]
+  inventoryItems      InventoryItem[]
+  inventoryTx         InventoryTransaction[]
+  reservations        InventoryReservation[]
+  purchaseOrders      PurchaseOrder[]
+  productionOrders    ProductionOrder[]
+  invoices            Invoice[]
+  payments            Payment[]
+  expenses            Expense[]
+  employees           Employee[]
+  payrollRecords      PayrollRecord[]
+  documents           Document[]
+  notifications       Notification[]
+  auditLogs           AuditLog[]
+  settings            Setting[]
+  sequences           Sequence[]
+  photos              Photo[]
+  cutPlans            CutPlan[]
+  importJobs          ImportJob[]
+
+  @@map("organizations")
+}
+
+model Branch {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  code           String
+  address        String?
+  phone          String?
+  isDefault      Boolean  @default(false)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  users          User[]
+  orders         CustomerOrder[]
+  inventoryItems InventoryItem[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("branches")
+}
+
+model Role {
+  id             String   @id @default(cuid())
+  organizationId String
+  code           String
+  name           String
+  description    String?
+  isSystem       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  permissions  RolePermission[]
+  users        User[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("roles")
+}
+
+model RolePermission {
+  id         String @id @default(cuid())
+  roleId     String
+  permission String
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permission])
+  @@index([roleId])
+  @@map("role_permissions")
+}
+
+model User {
+  id             String    @id @default(cuid())
+  organizationId String
+  branchId       String?
+  roleId         String
+  email          String
+  passwordHash   String
+  firstName      String
+  lastName       String
+  middleName     String?
+  phone          String?
+  isActive       Boolean   @default(true)
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization      Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch            Branch?                @relation(fields: [branchId], references: [id])
+  role              Role                   @relation(fields: [roleId], references: [id])
+  sessions          Session[]
+  employee          Employee?
+  managedCustomers  Customer[]             @relation("CustomerManager")
+  createdOrders     CustomerOrder[]        @relation("OrderCreatedBy")
+  managedOrders     CustomerOrder[]        @relation("OrderManager")
+  assignedWorkItems WorkItem[]             @relation("WorkItemAssignee")
+  masterWorkItems   WorkItem[]             @relation("WorkItemMaster")
+  customerNotes     CustomerNote[]
+  communications    CustomerCommunication[]
+  workItemComments  WorkItemComment[]
+  statusChanges     WorkItemStatusHistory[]
+  inventoryTx       InventoryTransaction[]
+  payments          Payment[]
+  voidedPayments    Payment[]              @relation("PaymentVoidedBy")
+  auditLogs         AuditLog[]
+  notifications     Notification[]
+  photos            Photo[]
+  priceHistory      PriceHistory[]
+  productionTasks   ProductionTask[]
+  timeEntries       ProductionTimeEntry[]
+  qualityChecks     QualityCheck[]
+  documents         Document[]
+  importJobs        ImportJob[]
+  purchaseOrders    PurchaseOrder[]
+
+  @@unique([organizationId, email])
+  @@index([organizationId])
+  @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+// ---------------------------------------------------------------------------
+// CRM
+// ---------------------------------------------------------------------------
+
+model CustomerSource {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  campaign       String?
+  isActive       Boolean  @default(true)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customers    Customer[]
+
+  @@unique([organizationId, name])
+  @@map("customer_sources")
+}
+
+model Customer {
+  id                 String       @id @default(cuid())
+  organizationId     String
+  number             String
+  type               CustomerType @default(PERSON)
+  lastName           String?
+  firstName          String?
+  middleName         String?
+  companyName        String?
+  inn                String?
+  phone              String
+  phone2             String?
+  email              String?
+  telegram           String?
+  whatsapp           String?
+  address            String?
+  city               String?
+  birthDate          DateTime?
+  sourceId           String?
+  managerId          String?
+  note               String?
+  marketingConsent   Boolean      @default(false)
+  discountPercent    Float        @default(0)
+  rating             Int          @default(0)
+  segment            String?
+  lastContactAt      DateTime?
+  nextContactAt      DateTime?
+  isActive           Boolean      @default(true)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  organization   Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  source         CustomerSource?         @relation(fields: [sourceId], references: [id])
+  manager        User?                   @relation("CustomerManager", fields: [managerId], references: [id])
+  contacts       CustomerContact[]
+  addresses      CustomerAddress[]
+  notes          CustomerNote[]
+  communications CustomerCommunication[]
+  orders         CustomerOrder[]
+  invoices       Invoice[]
+  payments       Payment[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, phone])
+  @@index([organizationId, lastName])
+  @@map("customers")
+}
+
+model CustomerContact {
+  id         String  @id @default(cuid())
+  customerId String
+  name       String
+  position   String?
+  phone      String?
+  email      String?
+  isPrimary  Boolean @default(false)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("customer_contacts")
+}
+
+model CustomerAddress {
+  id         String  @id @default(cuid())
+  customerId String
+  label      String?
+  city       String?
+  street     String?
+  postalCode String?
+  comment    String?
+  isPrimary  Boolean @default(false)
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+  @@map("customer_addresses")
+}
+
+/// Internal staff notes — deliberately kept apart from customer communication.
+model CustomerNote {
+  id         String   @id @default(cuid())
+  customerId String
+  authorId   String?
+  body       String
+  createdAt  DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  author   User?    @relation(fields: [authorId], references: [id])
+
+  @@index([customerId])
+  @@map("customer_notes")
+}
+
+/// Outbound/inbound messages exchanged with the customer.
+model CustomerCommunication {
+  id         String                 @id @default(cuid())
+  customerId String
+  userId     String?
+  channel    CommunicationChannel
+  direction  CommunicationDirection
+  subject    String?
+  body       String
+  createdAt  DateTime               @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id])
+
+  @@index([customerId])
+  @@map("customer_communications")
+}
+
+// ---------------------------------------------------------------------------
+// Catalog & pricing
+// ---------------------------------------------------------------------------
+
+model CatalogCategory {
+  id             String       @id @default(cuid())
+  organizationId String
+  group          CatalogGroup
+  code           String
+  name           String
+  parentId       String?
+  sortOrder      Int          @default(0)
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  parent       CatalogCategory?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children     CatalogCategory[] @relation("CategoryTree")
+  items        CatalogItem[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId, group])
+  @@map("catalog_categories")
+}
+
+model TaxRate {
+  id             String  @id @default(cuid())
+  organizationId String
+  name           String
+  percent        Float
+  isDefault      Boolean @default(false)
+  isActive       Boolean @default(true)
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  catalogItems CatalogItem[]
+  invoiceItems InvoiceItem[]
+
+  @@unique([organizationId, name])
+  @@map("tax_rates")
+}
+
+model PriceFormula {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  expression     String
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  priceRules   PriceRule[]
+
+  @@unique([organizationId, name])
+  @@map("price_formulas")
+}
+
+model PriceMatrix {
+  id             String     @id @default(cuid())
+  organizationId String
+  name           String
+  axis           MatrixAxis @default(SIZE)
+  /// When true the nearest larger cell is used, otherwise exact match is required.
+  roundUp        Boolean    @default(true)
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  cells        PriceMatrixCell[]
+  priceRules   PriceRule[]
+
+  @@unique([organizationId, name])
+  @@map("price_matrices")
+}
+
+model PriceMatrixCell {
+  id       String @id @default(cuid())
+  matrixId String
+  /// Upper bound of the cell along the matrix axis (mm, mm², united inches…).
+  widthMm  Int?
+  heightMm Int?
+  upTo     Float?
+  /// Price in kopecks.
+  price    Int
+
+  matrix PriceMatrix @relation(fields: [matrixId], references: [id], onDelete: Cascade)
+
+  @@index([matrixId])
+  @@map("price_matrix_cells")
+}
+
+model PriceRule {
+  id             String        @id @default(cuid())
+  organizationId String
+  name           String
+  method         PricingMethod
+  /// Multiplier for COST_MULTIPLIER, percent for MARKUP.
+  factor         Float?
+  /// Fixed amount in kopecks for FIXED / per-unit rates.
+  amount         Int?
+  /// Extra per-cut / per-join tariffs in kopecks (CHOP / JOIN methods).
+  chopPrice      Int?
+  joinPrice      Int?
+  /// Minimum charge in kopecks.
+  minPrice       Int?
+  /// Cost floor: retail is never allowed below `cost * minMarkup`.
+  minMarkup      Float?
+  /// Rounding step in kopecks (100 = round to whole roubles).
+  roundTo        Int           @default(100)
+  formulaId      String?
+  matrixId       String?
+  isActive       Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  formula      PriceFormula? @relation(fields: [formulaId], references: [id])
+  matrix       PriceMatrix?  @relation(fields: [matrixId], references: [id])
+  catalogItems CatalogItem[]
+
+  @@unique([organizationId, name])
+  @@map("price_rules")
+}
+
+model Supplier {
+  id              String   @id @default(cuid())
+  organizationId  String
+  name            String
+  contactName     String?
+  phone           String?
+  email           String?
+  website         String?
+  /// Adapter key used by src/server/modules/integrations/suppliers.
+  apiAdapter      String?
+  apiConfig       Json?
+  deliveryType    String?
+  paymentTerms    String?
+  leadTimeDays    Int      @default(7)
+  discountPercent Float    @default(0)
+  currency        String   @default("RUB")
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  catalogItems   CatalogItem[]
+  supplierPrices SupplierPrice[]
+  purchaseOrders PurchaseOrder[]
+
+  @@unique([organizationId, name])
+  @@map("suppliers")
+}
+
+/// One catalog table for every component group. Group-specific attributes live
+/// in the 1:1 satellite tables below, so new groups never require a migration
+/// of orders or inventory.
+model CatalogItem {
+  id             String       @id @default(cuid())
+  organizationId String
+  group          CatalogGroup
+  categoryId     String?
+  supplierId     String?
+  internalSku    String
+  supplierSku    String?
+  barcode        String?
+  name           String
+  description    String?
+  manufacturer   String?
+  brand          String?
+  collection     String?
+  color          String?
+  colorHex       String?
+  material       String?
+  style          String?
+  unit           Unit         @default(PIECE)
+  /// Purchase price in kopecks per unit, before supplier discount.
+  supplierPrice  Int          @default(0)
+  supplierDiscountPercent Float @default(0)
+  /// Net cost in kopecks per unit (what the workshop actually pays).
+  costPrice      Int          @default(0)
+  /// Explicit retail price in kopecks per unit; when null the price rule decides.
+  retailPrice    Int?
+  priceRuleId    String?
+  taxRateId      String?
+  /// Technological waste share, 0.08 = 8 %.
+  wasteFactor    Float        @default(0)
+  minCharge      Int?
+  trackInventory Boolean      @default(true)
+  isActive       Boolean      @default(true)
+  imageUrl       String?
+  attributes     Json?
+  priceUpdatedAt DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  category       CatalogCategory? @relation(fields: [categoryId], references: [id])
+  supplier       Supplier?        @relation(fields: [supplierId], references: [id])
+  priceRule      PriceRule?       @relation(fields: [priceRuleId], references: [id])
+  taxRate        TaxRate?         @relation(fields: [taxRateId], references: [id])
+
+  moulding       MouldingSpec?
+  sheet          SheetSpec?
+  hardware       HardwareSpec?
+  service        ServiceSpec?
+
+  supplierPrices     SupplierPrice[]
+  priceHistory       PriceHistory[]
+  inventoryItems     InventoryItem[]
+  components         WorkItemComponent[]
+  purchaseOrderItems PurchaseOrderItem[]
+  cutPlanSticks      CutPlanStick[]
+
+  @@unique([organizationId, internalSku])
+  @@index([organizationId, group])
+  @@index([organizationId, barcode])
+  @@index([organizationId, name])
+  @@map("catalog_items")
+}
+
+/// Moulding-specific geometry and per-length tariffs.
+model MouldingSpec {
+  catalogItemId  String @id
+  /// Face width of the profile.
+  widthMm        Float
+  /// Height of the profile.
+  heightMm       Float
+  /// Rabbet (фальц) depth that swallows the sandwich edge.
+  rabbetMm       Float  @default(8)
+  /// Rabbet width that overlaps the artwork on each side.
+  rabbetOverlapMm Float @default(3)
+  /// Length of one stick as delivered.
+  stickLengthMm  Int    @default(3000)
+  /// Saw kerf and mitre allowance consumed per cut.
+  kerfMm         Float  @default(3)
+  /// Extra length added to every side for the mitre.
+  allowanceMm    Float  @default(0)
+  chopPrice      Int?
+  joinPrice      Int?
+
+  catalogItem CatalogItem @relation(fields: [catalogItemId], references: [id], onDelete: Cascade)
+
+  @@map("moulding_specs")
+}
+
+/// Sheet goods: matboard, glazing, backing, mounting boards, subframe panels.
+model SheetSpec {
+  catalogItemId  String @id
+  sheetWidthMm   Int
+  sheetHeightMm  Int
+  thicknessMm    Float  @default(1.4)
+  core           String?
+  /// UV protection percentage for glazing.
+  uvPercent      Int?
+  /// Whether the item can be cut from an already opened sheet.
+  allowOffcuts    Boolean @default(true)
+
+  catalogItem CatalogItem @relation(fields: [catalogItemId], references: [id], onDelete: Cascade)
+
+  @@map("sheet_specs")
+}
+
+model HardwareSpec {
+  catalogItemId String @id
+  /// Default pieces used per work item.
+  perItem       Float  @default(1)
+  /// Additional pieces per metre of perimeter (wire, cord…).
+  perPerimeterM Float  @default(0)
+  packSize      Int    @default(1)
+
+  catalogItem CatalogItem @relation(fields: [catalogItemId], references: [id], onDelete: Cascade)
+
+  @@map("hardware_specs")
+}
+
+/// Labour / service catalog entries carry their production norms.
+model ServiceSpec {
+  catalogItemId    String @id
+  operationId      String?
+  standardMinutes  Float  @default(0)
+  /// Additional minutes per m² of the work item (stretching, mounting…).
+  minutesPerM2     Float  @default(0)
+  complexityFactor Float  @default(1)
+
+  catalogItem CatalogItem      @relation(fields: [catalogItemId], references: [id], onDelete: Cascade)
+  operation   LabourOperation? @relation(fields: [operationId], references: [id])
+
+  @@map("service_specs")
+}
+
+model SupplierPrice {
+  id            String   @id @default(cuid())
+  catalogItemId String
+  supplierId    String
+  supplierSku   String?
+  price         Int
+  currency      String   @default("RUB")
+  discountPercent Float  @default(0)
+  leadTimeDays  Int      @default(7)
+  stockQuantity Float?
+  updatedAt     DateTime @updatedAt
+
+  catalogItem CatalogItem @relation(fields: [catalogItemId], references: [id], onDelete: Cascade)
+  supplier    Supplier    @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@unique([catalogItemId, supplierId])
+  @@map("supplier_prices")
+}
+
+/// Prices are never overwritten silently — every change lands here.
+model PriceHistory {
+  id            String   @id @default(cuid())
+  catalogItemId String
+  field         String
+  oldValue      Int?
+  newValue      Int?
+  reason        String?
+  changedById   String?
+  createdAt     DateTime @default(now())
+
+  catalogItem CatalogItem @relation(fields: [catalogItemId], references: [id], onDelete: Cascade)
+  changedBy   User?       @relation(fields: [changedById], references: [id])
+
+  @@index([catalogItemId])
+  @@map("price_history")
+}
+
+/// Production norms (раскрой, сборка, натяжка…) used by tech cards and payroll.
+model LabourOperation {
+  id              String   @id @default(cuid())
+  organizationId  String
+  code            String
+  name            String
+  /// Norm in minutes for an average item.
+  standardMinutes Float    @default(10)
+  minutesPerM2    Float    @default(0)
+  /// Worker pay in kopecks per minute.
+  payRatePerMinute Int     @default(0)
+  /// Retail price of the operation in kopecks; null → derived from norm.
+  retailPrice     Int?
+  complexityFactor Float   @default(1)
+  stage           ProductionStage @default(ASSEMBLY)
+  sortOrder       Int      @default(0)
+  isActive        Boolean  @default(true)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  services     ServiceSpec[]
+  tasks        ProductionTask[]
+
+  @@unique([organizationId, code])
+  @@map("labour_operations")
+}
+
+/// Ready-made framing recipes ("Вышивка премиум", "Диплом"…).
+model FrameTemplate {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  workType       String?
+  /// Serialised FramingSpec defaults applied when the template is chosen.
+  payload        Json
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, name])
+  @@map("frame_templates")
+}
+
+// ---------------------------------------------------------------------------
+// Orders
+// ---------------------------------------------------------------------------
+
+model CustomerOrder {
+  id               String                @id @default(cuid())
+  organizationId   String
+  branchId         String?
+  number           String
+  customerId       String
+  managerId        String?
+  createdById      String?
+  commercialStatus CommercialStatus      @default(CALCULATION)
+  productionStatus OrderProductionStatus @default(WAITING)
+  paymentStatus    OrderPaymentStatus    @default(UNPAID)
+  priority         Priority              @default(NORMAL)
+  dueDate          DateTime?
+  notes            String?
+  /// Totals in kopecks, recomputed inside a transaction on every change.
+  subtotal         Int                   @default(0)
+  discountTotal    Int                   @default(0)
+  taxTotal         Int                   @default(0)
+  total            Int                   @default(0)
+  paidTotal        Int                   @default(0)
+  refundedTotal    Int                   @default(0)
+  balance          Int                   @default(0)
+  costTotal        Int                   @default(0)
+  confirmedAt      DateTime?
+  issuedAt         DateTime?
+  closedAt         DateTime?
+  cancelledAt      DateTime?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch?      @relation(fields: [branchId], references: [id])
+  customer     Customer     @relation(fields: [customerId], references: [id])
+  manager      User?        @relation("OrderManager", fields: [managerId], references: [id])
+  createdBy    User?        @relation("OrderCreatedBy", fields: [createdById], references: [id])
+  workItems    WorkItem[]
+  invoices     Invoice[]
+  payments     Payment[]
+  documents    Document[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, customerId])
+  @@index([organizationId, commercialStatus])
+  @@index([organizationId, dueDate])
+  @@map("customer_orders")
+}
+
+model WorkItem {
+  id             String         @id @default(cuid())
+  organizationId String
+  orderId        String
+  number         String
+  seq            Int
+  title          String
+  description    String?
+  workType       String?
+  status         WorkItemStatus @default(DRAFT)
+  priority       Priority       @default(NORMAL)
+  dueDate        DateTime?
+  assigneeId     String?
+  masterId       String?
+  quantity       Int            @default(1)
+
+  /// Artwork dimensions in millimetres — the single source of truth.
+  widthMm        Int            @default(0)
+  heightMm       Int            @default(0)
+  orientation    String?
+
+  /// Serialised FramingSpec (mats, mouldings, glazing, mounting…).
+  spec           Json?
+  /// Serialised CalculationResult produced by the calculation engine.
+  calculation    Json?
+
+  /// All amounts in kopecks.
+  materialCost   Int            @default(0)
+  labourCost     Int            @default(0)
+  extraCost      Int            @default(0)
+  totalCost      Int            @default(0)
+  subtotal       Int            @default(0)
+  discountAmount Int            @default(0)
+  discountPercent Float         @default(0)
+  taxAmount      Int            @default(0)
+  price          Int            @default(0)
+  margin         Int            @default(0)
+  marginPercent  Float          @default(0)
+
+  materialsReservedAt DateTime?
+  materialsConsumedAt DateTime?
+  readyAt        DateTime?
+  issuedAt       DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  organization    Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  order           CustomerOrder           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  assignee        User?                   @relation("WorkItemAssignee", fields: [assigneeId], references: [id])
+  master          User?                   @relation("WorkItemMaster", fields: [masterId], references: [id])
+  components      WorkItemComponent[]
+  statusHistory   WorkItemStatusHistory[]
+  comments        WorkItemComment[]
+  designVariants  DesignVariant[]
+  reservations    InventoryReservation[]
+  productionOrder ProductionOrder?
+  qualityChecks   QualityCheck[]
+  invoiceItems    InvoiceItem[]
+  cutPlanPieces   CutPlanPiece[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, status])
+  @@index([orderId])
+  @@map("work_items")
+}
+
+/// Generic component line. There is no frame1/frame2/mat1 — any number of any
+/// group can hang off a work item, which is what keeps the model extensible.
+model WorkItemComponent {
+  id            String        @id @default(cuid())
+  workItemId    String
+  group         CatalogGroup
+  catalogItemId String?
+  name          String
+  /// Role inside the construction: OUTER_FRAME, INNER_FRAME, MAT_1…MAT_7, GLAZING…
+  role          String?
+  sortOrder     Int           @default(0)
+  quantity      Float         @default(1)
+  /// Quantity actually taken from stock (quantity + technological waste).
+  consumedQuantity Float      @default(0)
+  wasteQuantity Float         @default(0)
+  unit          Unit          @default(PIECE)
+  pricingMethod PricingMethod @default(COST_MULTIPLIER)
+  /// kopecks
+  unitCost      Int           @default(0)
+  cost          Int           @default(0)
+  unitPrice     Int           @default(0)
+  price         Int           @default(0)
+  discountPercent Float       @default(0)
+  discountAmount Int          @default(0)
+  isBillable    Boolean       @default(true)
+  meta          Json?
+
+  workItem    WorkItem     @relation(fields: [workItemId], references: [id], onDelete: Cascade)
+  catalogItem CatalogItem? @relation(fields: [catalogItemId], references: [id])
+
+  @@index([workItemId])
+  @@index([catalogItemId])
+  @@map("work_item_components")
+}
+
+model WorkItemStatusHistory {
+  id         String          @id @default(cuid())
+  workItemId String
+  fromStatus WorkItemStatus?
+  toStatus   WorkItemStatus
+  userId     String?
+  note       String?
+  createdAt  DateTime        @default(now())
+
+  workItem WorkItem @relation(fields: [workItemId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id])
+
+  @@index([workItemId])
+  @@map("work_item_status_history")
+}
+
+model WorkItemComment {
+  id         String   @id @default(cuid())
+  workItemId String
+  authorId   String?
+  body       String
+  createdAt  DateTime @default(now())
+
+  workItem WorkItem @relation(fields: [workItemId], references: [id], onDelete: Cascade)
+  author   User?    @relation(fields: [authorId], references: [id])
+
+  @@index([workItemId])
+  @@map("work_item_comments")
+}
+
+/// Design options shown to the customer; the chosen one becomes the work item.
+model DesignVariant {
+  id         String   @id @default(cuid())
+  workItemId String
+  name       String
+  spec       Json
+  price      Int      @default(0)
+  cost       Int      @default(0)
+  previewUrl String?
+  isSelected Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  workItem WorkItem @relation(fields: [workItemId], references: [id], onDelete: Cascade)
+
+  @@index([workItemId])
+  @@map("design_variants")
+}
+
+model Photo {
+  id             String    @id @default(cuid())
+  organizationId String
+  entityType     String
+  entityId       String
+  kind           PhotoKind
+  url            String
+  thumbnailUrl   String?
+  mediumUrl      String?
+  mimeType       String?
+  width          Int?
+  height         Int?
+  sizeBytes      Int?
+  description    String?
+  createdById    String?
+  createdAt      DateTime  @default(now())
+
+  organization Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?             @relation(fields: [createdById], references: [id])
+  annotations  PhotoAnnotation[]
+
+  @@index([organizationId, entityType, entityId])
+  @@map("photos")
+}
+
+/// Defect markers placed directly on an intake photo.
+model PhotoAnnotation {
+  id       String  @id @default(cuid())
+  photoId  String
+  /// Relative coordinates 0..1 so the marker survives any resize.
+  x        Float
+  y        Float
+  label    String
+  severity String  @default("minor")
+
+  photo Photo @relation(fields: [photoId], references: [id], onDelete: Cascade)
+
+  @@index([photoId])
+  @@map("photo_annotations")
+}
+
+// ---------------------------------------------------------------------------
+// Inventory
+// ---------------------------------------------------------------------------
+
+model InventoryItem {
+  id                String   @id @default(cuid())
+  organizationId    String
+  branchId          String?
+  catalogItemId     String
+  quantityOnHand    Float    @default(0)
+  quantityReserved  Float    @default(0)
+  minQuantity       Float    @default(0)
+  maxQuantity       Float?
+  reorderPoint      Float    @default(0)
+  reorderQuantity   Float    @default(0)
+  location          String?
+  /// Weighted average cost in kopecks per unit.
+  avgCost           Int      @default(0)
+  lastReceivedAt    DateTime?
+  lastIssuedAt      DateTime?
+  updatedAt         DateTime @updatedAt
+
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  branch       Branch?                @relation(fields: [branchId], references: [id])
+  catalogItem  CatalogItem            @relation(fields: [catalogItemId], references: [id], onDelete: Cascade)
+  transactions InventoryTransaction[]
+  reservations InventoryReservation[]
+
+  @@unique([organizationId, branchId, catalogItemId])
+  @@index([organizationId])
+  @@map("inventory_items")
+}
+
+model InventoryTransaction {
+  id              String          @id @default(cuid())
+  organizationId  String
+  inventoryItemId String
+  type            InventoryTxType
+  /// Signed quantity: positive adds to stock, negative removes.
+  quantity        Float
+  unitCost        Int             @default(0)
+  totalCost       Int             @default(0)
+  balanceAfter    Float
+  refType         String?
+  refId           String?
+  note            String?
+  userId          String?
+  createdAt       DateTime        @default(now())
+
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  user          User?         @relation(fields: [userId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([inventoryItemId])
+  @@map("inventory_transactions")
+}
+
+model InventoryReservation {
+  id              String            @id @default(cuid())
+  organizationId  String
+  inventoryItemId String
+  workItemId      String
+  quantity        Float
+  status          ReservationStatus @default(ACTIVE)
+  createdAt       DateTime          @default(now())
+  releasedAt      DateTime?
+  consumedAt      DateTime?
+
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id], onDelete: Cascade)
+  workItem      WorkItem      @relation(fields: [workItemId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@index([workItemId])
+  @@map("inventory_reservations")
+}
+
+// ---------------------------------------------------------------------------
+// Procurement
+// ---------------------------------------------------------------------------
+
+model PurchaseOrder {
+  id             String              @id @default(cuid())
+  organizationId String
+  number         String
+  supplierId     String
+  status         PurchaseOrderStatus @default(DRAFT)
+  expectedAt     DateTime?
+  sentAt         DateTime?
+  receivedAt     DateTime?
+  notes          String?
+  totalCost      Int                 @default(0)
+  createdById    String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  supplier     Supplier            @relation(fields: [supplierId], references: [id])
+  createdBy    User?               @relation(fields: [createdById], references: [id])
+  items        PurchaseOrderItem[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, status])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id               String @id @default(cuid())
+  purchaseOrderId  String
+  catalogItemId    String
+  quantityOrdered  Float
+  quantityReceived Float  @default(0)
+  unitCost         Int    @default(0)
+  lineTotal        Int    @default(0)
+  note             String?
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  catalogItem   CatalogItem   @relation(fields: [catalogItemId], references: [id])
+
+  @@index([purchaseOrderId])
+  @@map("purchase_order_items")
+}
+
+// ---------------------------------------------------------------------------
+// Production
+// ---------------------------------------------------------------------------
+
+model ProductionOrder {
+  id             String          @id @default(cuid())
+  organizationId String
+  workItemId     String          @unique
+  number         String
+  stage          ProductionStage @default(NEW)
+  masterId       String?
+  plannedMinutes Float           @default(0)
+  actualMinutes  Float           @default(0)
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workItem     WorkItem         @relation(fields: [workItemId], references: [id], onDelete: Cascade)
+  tasks        ProductionTask[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, stage])
+  @@map("production_orders")
+}
+
+model ProductionTask {
+  id                String     @id @default(cuid())
+  productionOrderId String
+  operationId       String?
+  seq               Int
+  name              String
+  status            TaskStatus @default(PENDING)
+  standardMinutes   Float      @default(0)
+  actualMinutes     Float      @default(0)
+  assigneeId        String?
+  startedAt         DateTime?
+  finishedAt        DateTime?
+  /// Worker earnings for this task in kopecks.
+  payAmount         Int        @default(0)
+  note              String?
+
+  productionOrder ProductionOrder       @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  operation       LabourOperation?      @relation(fields: [operationId], references: [id])
+  assignee        User?                 @relation(fields: [assigneeId], references: [id])
+  timeEntries     ProductionTimeEntry[]
+  payrollEntries  PayrollEntry[]
+
+  @@index([productionOrderId])
+  @@map("production_tasks")
+}
+
+model ProductionTimeEntry {
+  id        String    @id @default(cuid())
+  taskId    String
+  userId    String
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  minutes   Float     @default(0)
+
+  task ProductionTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User           @relation(fields: [userId], references: [id])
+
+  @@index([taskId])
+  @@map("production_time_entries")
+}
+
+model QualityCheck {
+  id         String        @id @default(cuid())
+  workItemId String
+  result     QualityResult @default(PENDING)
+  checkedById String?
+  checkedAt  DateTime?
+  note       String?
+  createdAt  DateTime      @default(now())
+
+  workItem  WorkItem           @relation(fields: [workItemId], references: [id], onDelete: Cascade)
+  checkedBy User?              @relation(fields: [checkedById], references: [id])
+  items     QualityCheckItem[]
+
+  @@index([workItemId])
+  @@map("quality_checks")
+}
+
+model QualityCheckItem {
+  id             String  @id @default(cuid())
+  qualityCheckId String
+  code           String
+  label          String
+  required       Boolean @default(true)
+  checked        Boolean @default(false)
+  note           String?
+  sortOrder      Int     @default(0)
+
+  qualityCheck QualityCheck @relation(fields: [qualityCheckId], references: [id], onDelete: Cascade)
+
+  @@index([qualityCheckId])
+  @@map("quality_check_items")
+}
+
+/// Optimised moulding cutting plan, possibly spanning several work items.
+model CutPlan {
+  id             String   @id @default(cuid())
+  organizationId String
+  number         String
+  /// Total offcut length in millimetres.
+  wasteMm        Int      @default(0)
+  usedMm         Int      @default(0)
+  stickCount     Int      @default(0)
+  params         Json?
+  createdAt      DateTime @default(now())
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  sticks       CutPlanStick[]
+
+  @@unique([organizationId, number])
+  @@map("cut_plans")
+}
+
+model CutPlanStick {
+  id            String @id @default(cuid())
+  cutPlanId     String
+  catalogItemId String
+  seq           Int
+  lengthMm      Int
+  usedMm        Int
+  wasteMm       Int
+
+  cutPlan     CutPlan        @relation(fields: [cutPlanId], references: [id], onDelete: Cascade)
+  catalogItem CatalogItem    @relation(fields: [catalogItemId], references: [id])
+  pieces      CutPlanPiece[]
+
+  @@index([cutPlanId])
+  @@map("cut_plan_sticks")
+}
+
+model CutPlanPiece {
+  id         String  @id @default(cuid())
+  stickId    String
+  workItemId String?
+  label      String
+  lengthMm   Int
+  seq        Int
+
+  stick    CutPlanStick @relation(fields: [stickId], references: [id], onDelete: Cascade)
+  workItem WorkItem?    @relation(fields: [workItemId], references: [id])
+
+  @@index([stickId])
+  @@map("cut_plan_pieces")
+}
+
+// ---------------------------------------------------------------------------
+// Finance
+// ---------------------------------------------------------------------------
+
+model Invoice {
+  id             String        @id @default(cuid())
+  organizationId String
+  number         String
+  customerId     String
+  orderId        String?
+  status         InvoiceStatus @default(DRAFT)
+  issuedAt       DateTime      @default(now())
+  dueAt          DateTime?
+  subtotal       Int           @default(0)
+  discountTotal  Int           @default(0)
+  taxTotal       Int           @default(0)
+  total          Int           @default(0)
+  paidTotal      Int           @default(0)
+  balance        Int           @default(0)
+  note           String?
+  voidedAt       DateTime?
+  voidReason     String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer       @relation(fields: [customerId], references: [id])
+  order        CustomerOrder? @relation(fields: [orderId], references: [id])
+  items        InvoiceItem[]
+  payments     Payment[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, status])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id             String  @id @default(cuid())
+  invoiceId      String
+  workItemId     String?
+  description    String
+  quantity       Float   @default(1)
+  unitPrice      Int     @default(0)
+  discountAmount Int     @default(0)
+  taxRateId      String?
+  taxAmount      Int     @default(0)
+  total          Int     @default(0)
+
+  invoice  Invoice   @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  workItem WorkItem? @relation(fields: [workItemId], references: [id])
+  taxRate  TaxRate?  @relation(fields: [taxRateId], references: [id])
+
+  @@index([invoiceId])
+  @@map("invoice_items")
+}
+
+/// Payments are never deleted — they are voided, keeping the ledger intact.
+model Payment {
+  id             String        @id @default(cuid())
+  organizationId String
+  number         String
+  customerId     String
+  orderId        String?
+  invoiceId      String?
+  kind           PaymentKind   @default(PAYMENT)
+  state          PaymentState  @default(COMPLETED)
+  method         PaymentMethod @default(CASH)
+  /// Always positive; `kind` decides the direction.
+  amount         Int
+  paidAt         DateTime      @default(now())
+  note           String?
+  userId         String?
+  voidedAt       DateTime?
+  voidedById     String?
+  voidReason     String?
+  createdAt      DateTime      @default(now())
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer       @relation(fields: [customerId], references: [id])
+  order        CustomerOrder? @relation(fields: [orderId], references: [id])
+  invoice      Invoice?       @relation(fields: [invoiceId], references: [id])
+  user         User?          @relation(fields: [userId], references: [id])
+  voidedBy     User?          @relation("PaymentVoidedBy", fields: [voidedById], references: [id])
+
+  @@unique([organizationId, number])
+  @@index([organizationId, paidAt])
+  @@index([orderId])
+  @@map("payments")
+}
+
+model Expense {
+  id             String   @id @default(cuid())
+  organizationId String
+  category       String
+  description    String?
+  amount         Int
+  spentAt        DateTime @default(now())
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, spentAt])
+  @@map("expenses")
+}
+
+// ---------------------------------------------------------------------------
+// HR & payroll
+// ---------------------------------------------------------------------------
+
+model Employee {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String?  @unique
+  firstName      String
+  lastName       String
+  position       String?
+  payType        PayType  @default(PIECE)
+  /// Base rate in kopecks (per hour for HOURLY, per period for FIXED).
+  baseRate       Int      @default(0)
+  /// Share of the work item price for MIXED/PIECE schemes, 0.15 = 15 %.
+  pieceRateShare Float    @default(0)
+  /// Available minutes per working day — used for capacity planning.
+  dailyCapacityMinutes Int @default(420)
+  isActive       Boolean  @default(true)
+  hiredAt        DateTime?
+  createdAt      DateTime @default(now())
+
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User?           @relation(fields: [userId], references: [id])
+  payrollRecords PayrollRecord[]
+  payrollEntries PayrollEntry[]
+
+  @@index([organizationId])
+  @@map("employees")
+}
+
+model PayrollRecord {
+  id             String        @id @default(cuid())
+  organizationId String
+  employeeId     String
+  periodStart    DateTime
+  periodEnd      DateTime
+  pieceworkTotal Int           @default(0)
+  hourlyTotal    Int           @default(0)
+  bonus          Int           @default(0)
+  deductions     Int           @default(0)
+  total          Int           @default(0)
+  status         PayrollStatus @default(OPEN)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employee     Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  entries      PayrollEntry[]
+
+  @@unique([organizationId, employeeId, periodStart])
+  @@map("payroll_records")
+}
+
+model PayrollEntry {
+  id              String   @id @default(cuid())
+  payrollRecordId String?
+  employeeId      String
+  productionTaskId String?
+  description     String
+  minutes         Float    @default(0)
+  amount          Int      @default(0)
+  earnedAt        DateTime @default(now())
+
+  payrollRecord  PayrollRecord?  @relation(fields: [payrollRecordId], references: [id])
+  employee       Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  productionTask ProductionTask? @relation(fields: [productionTaskId], references: [id])
+
+  @@index([employeeId, earnedAt])
+  @@map("payroll_entries")
+}
+
+// ---------------------------------------------------------------------------
+// System
+// ---------------------------------------------------------------------------
+
+model Document {
+  id             String       @id @default(cuid())
+  organizationId String
+  type           DocumentType
+  entityType     String
+  entityId       String
+  orderId        String?
+  number         String?
+  title          String
+  fileUrl        String?
+  payload        Json?
+  createdById    String?
+  createdAt      DateTime     @default(now())
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  order        CustomerOrder? @relation(fields: [orderId], references: [id])
+  createdBy    User?          @relation(fields: [createdById], references: [id])
+
+  @@index([organizationId, entityType, entityId])
+  @@map("documents")
+}
+
+model Notification {
+  id             String           @id @default(cuid())
+  organizationId String
+  userId         String?
+  type           NotificationType
+  title          String
+  body           String?
+  entityType     String?
+  entityId       String?
+  readAt         DateTime?
+  createdAt      DateTime         @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id])
+
+  @@index([organizationId, userId, readAt])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id             String   @id @default(cuid())
+  organizationId String
+  userId         String?
+  action         String
+  entity         String
+  entityId       String?
+  oldValue       Json?
+  newValue       Json?
+  ip             String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id])
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, entity, entityId])
+  @@map("audit_logs")
+}
+
+model Setting {
+  id             String   @id @default(cuid())
+  organizationId String
+  key            String
+  value          Json
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, key])
+  @@map("settings")
+}
+
+/// Transactional document numbering (orders, invoices, POs…).
+model Sequence {
+  id             String @id @default(cuid())
+  organizationId String
+  key            String
+  prefix         String @default("")
+  value          Int    @default(0)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, key])
+  @@map("sequences")
+}
+
+model ImportJob {
+  id             String       @id @default(cuid())
+  organizationId String
+  type           String
+  mode           ImportMode   @default(UPSERT)
+  status         ImportStatus @default(DRAFT)
+  fileName       String?
+  sheetName      String?
+  mapping        Json?
+  stats          Json?
+  errors         Json?
+  createdById    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation(fields: [createdById], references: [id])
+
+  @@index([organizationId])
+  @@map("import_jobs")
+}
