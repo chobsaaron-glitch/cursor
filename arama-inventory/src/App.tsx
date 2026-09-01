@@ -1,15 +1,23 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import {
-  adjustQuantity,
+  deleteCatalogItem,
   deleteMolding,
   exportAll,
+  findCatalogByArticle,
+  getCatalogItem,
   getMolding,
+  getSyncSettings,
   importAll,
+  listCatalog,
   listCells,
   listMoldings,
+  saveCatalogItem,
   saveMolding,
+  saveSyncSettings,
 } from './db'
-import type { Filters, MoldingItem, View } from './types'
+import { queueBackgroundSync, subscribeSync, type SyncState } from './sync'
+import type { CatalogItem, Filters, MoldingItem, SyncSettings, View } from './types'
+import { applyTheme, readStoredTheme, THEMES, type ThemeId } from './themes'
 import {
   filterMoldings,
   formatDate,
@@ -23,13 +31,20 @@ const emptyForm = {
   cell: '',
   article: '',
   lengthCm: '',
-  quantity: '1',
   photoUrl: '',
   comment: '',
   createdAt: '',
 }
 
+const emptyCatalogForm = {
+  article: '',
+  name: '',
+  photoUrl: '',
+  notes: '',
+}
+
 type FormState = typeof emptyForm
+type CatalogFormState = typeof emptyCatalogForm
 
 function IconBack() {
   return (
@@ -82,6 +97,83 @@ function Thumb({ url, article }: { url: string; article: string }) {
   )
 }
 
+function ArticleSuggest({
+  value,
+  catalog,
+  onChange,
+}: {
+  value: string
+  catalog: CatalogItem[]
+  onChange: (article: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const q = value.trim().toLowerCase()
+
+  const matches = q
+    ? catalog
+        .map((item) => {
+          const art = item.article.toLowerCase()
+          const name = item.name.toLowerCase()
+          let score = 0
+          if (art === q) score = 3
+          else if (art.startsWith(q)) score = 2
+          else if (art.includes(q) || name.includes(q)) score = 1
+          else return null
+          return { item, score }
+        })
+        .filter((row): row is { item: CatalogItem; score: number } => row !== null)
+        .sort((a, b) => b.score - a.score || a.item.article.localeCompare(b.item.article, 'ru'))
+        .slice(0, 20)
+        .map((row) => row.item)
+    : []
+
+  useEffect(() => {
+    function onDocClick(e: MouseEvent) {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    return () => document.removeEventListener('mousedown', onDocClick)
+  }, [])
+
+  return (
+    <div className="suggest-wrap" ref={wrapRef}>
+      <input
+        id="article"
+        autoComplete="off"
+        placeholder="Код багета"
+        value={value}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          onChange(e.target.value)
+          setOpen(true)
+        }}
+        required
+      />
+      {open && matches.length > 0 && (
+        <ul className="suggest-list" role="listbox">
+          {matches.map((item) => (
+            <li key={item.article}>
+              <button
+                type="button"
+                className="suggest-item"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  onChange(item.article)
+                  setOpen(false)
+                }}
+              >
+                <strong>{item.article}</strong>
+                {item.name && <span>{item.name}</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function PhotoBlock({ url, className }: { url: string; className: string }) {
   const [failed, setFailed] = useState(false)
   useEffect(() => setFailed(false), [url])
@@ -106,20 +198,56 @@ function PhotoBlock({ url, className }: { url: string; className: string }) {
 export default function App() {
   const [view, setView] = useState<View>({ name: 'list' })
   const [items, setItems] = useState<MoldingItem[]>([])
+  const [catalog, setCatalog] = useState<CatalogItem[]>([])
   const [cells, setCells] = useState<string[]>([])
   const [filters, setFilters] = useState<Filters>({ query: '', cell: '' })
+  const [catalogQuery, setCatalogQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [form, setForm] = useState<FormState>(emptyForm)
+  const [catalogForm, setCatalogForm] = useState<CatalogFormState>(emptyCatalogForm)
   const [formError, setFormError] = useState('')
+  const [catalogHint, setCatalogHint] = useState('')
   const [detail, setDetail] = useState<MoldingItem | null>(null)
+  const [syncSettings, setSyncSettings] = useState<SyncSettings>({
+    scriptUrl: '',
+    token: '',
+    lastSyncAt: '',
+    autoSync: false,
+  })
+  const [syncState, setSyncState] = useState<SyncState>({
+    status: 'idle',
+    message: '',
+    lastSyncAt: '',
+  })
+  const [syncMessage, setSyncMessage] = useState('')
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [showInstall, setShowInstall] = useState(false)
+  const [theme, setTheme] = useState<ThemeId>(() => readStoredTheme())
   const fileRef = useRef<HTMLInputElement>(null)
+  const photoManualRef = useRef(false)
+
+  useEffect(() => {
+    applyTheme(theme)
+  }, [theme])
+
+  useEffect(() => {
+    return subscribeSync((next) => {
+      setSyncState(next)
+      if (next.status === 'idle' && next.message) void refresh()
+    })
+  }, [])
 
   async function refresh() {
-    const [all, cellList] = await Promise.all([listMoldings(), listCells()])
+    const [all, cellList, catalogList, settings] = await Promise.all([
+      listMoldings(),
+      listCells(),
+      listCatalog(),
+      getSyncSettings(),
+    ])
     setItems(all)
     setCells(cellList)
+    setCatalog(catalogList)
+    setSyncSettings(settings)
   }
 
   useEffect(() => {
@@ -144,6 +272,7 @@ export default function App() {
 
   useEffect(() => {
     if (view.name === 'form') {
+      photoManualRef.current = false
       if (view.itemId) {
         getMolding(view.itemId).then((item) => {
           if (!item) {
@@ -154,12 +283,12 @@ export default function App() {
             cell: item.cell,
             article: item.article,
             lengthCm: String(item.lengthCm),
-            quantity: String(item.quantity),
             photoUrl: item.photoUrl,
             comment: item.comment,
             createdAt: item.createdAt.slice(0, 10),
           })
           setFormError('')
+          setCatalogHint('')
         })
       } else {
         setForm({
@@ -167,6 +296,7 @@ export default function App() {
           createdAt: new Date().toISOString().slice(0, 10),
         })
         setFormError('')
+        setCatalogHint('')
       }
     }
     if (view.name === 'detail') {
@@ -178,10 +308,73 @@ export default function App() {
         setDetail(item)
       })
     }
+    if (view.name === 'catalog-form') {
+      if (view.article) {
+        getCatalogItem(view.article).then((item) => {
+          if (!item) {
+            setView({ name: 'catalog' })
+            return
+          }
+          setCatalogForm({
+            article: item.article,
+            name: item.name,
+            photoUrl: item.photoUrl,
+            notes: item.notes,
+          })
+          setFormError('')
+        })
+      } else {
+        setCatalogForm(emptyCatalogForm)
+        setFormError('')
+      }
+    }
+    if (view.name === 'sync') {
+      getSyncSettings().then(setSyncSettings)
+      setSyncMessage('')
+    }
   }, [view])
+
+  // Автоподстановка фото из справочника при вводе артикула
+  useEffect(() => {
+    if (view.name !== 'form') return
+    const article = form.article.trim()
+    if (!article) {
+      setCatalogHint('')
+      return
+    }
+
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void findCatalogByArticle(article).then((item) => {
+        if (cancelled) return
+        if (!item) {
+          setCatalogHint('Артикула нет в справочнике')
+          return
+        }
+        setCatalogHint(
+          item.name
+            ? `Из справочника: ${item.name}`
+            : 'Артикул найден в справочнике — фото подставлено',
+        )
+        if (!photoManualRef.current && item.photoUrl) {
+          setForm((f) => (f.photoUrl === item.photoUrl ? f : { ...f, photoUrl: item.photoUrl }))
+        }
+      })
+    }, 280)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [form.article, view])
 
   const visible = filterMoldings(items, filters)
   const stats = summarizeStock(filters.cell || filters.query ? visible : items)
+  const visibleCatalog = catalog.filter((c) => {
+    const q = catalogQuery.trim().toLowerCase()
+    if (!q) return true
+    return [c.article, c.name, c.notes, c.photoUrl].join(' ').toLowerCase().includes(q)
+  })
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -198,7 +391,6 @@ export default function App() {
       setFormError('Укажите длину рейки в сантиметрах')
       return
     }
-    const quantity = Math.max(0, Math.floor(Number(form.quantity) || 0))
     const createdAt = form.createdAt
       ? new Date(`${form.createdAt}T12:00:00`).toISOString()
       : undefined
@@ -208,28 +400,62 @@ export default function App() {
       cell: form.cell,
       article: form.article,
       lengthCm,
-      quantity,
+      quantity: 1,
       photoUrl: form.photoUrl,
       comment: form.comment,
       createdAt,
     })
+
+    // Если артикула нет в справочнике, а фото есть — добавим в справочник
+    const existing = await findCatalogByArticle(saved.article)
+    if (!existing && saved.photoUrl) {
+      await saveCatalogItem({
+        article: saved.article,
+        name: '',
+        photoUrl: saved.photoUrl,
+        notes: saved.comment,
+      })
+    } else if (existing && saved.photoUrl && !existing.photoUrl) {
+      await saveCatalogItem({
+        ...existing,
+        photoUrl: saved.photoUrl,
+      })
+    }
+
     await refresh()
+    maybeQueueSync()
     setView({ name: 'detail', itemId: saved.id })
+  }
+
+  async function onCatalogSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!catalogForm.article.trim()) {
+      setFormError('Укажите артикул')
+      return
+    }
+    if (!catalogForm.photoUrl.trim()) {
+      setFormError('Укажите ссылку на фото')
+      return
+    }
+    await saveCatalogItem(catalogForm)
+    await refresh()
+    maybeQueueSync()
+    setView({ name: 'catalog' })
   }
 
   async function onDelete(id: string) {
     if (!confirm('Удалить эту запись со склада?')) return
     await deleteMolding(id)
     await refresh()
+    maybeQueueSync()
     setView({ name: 'list' })
   }
 
-  async function onAdjust(id: string, delta: number) {
-    const updated = await adjustQuantity(id, delta)
-    if (updated) {
-      setDetail(updated)
-      await refresh()
-    }
+  async function onDeleteCatalog(article: string) {
+    if (!confirm(`Удалить артикул ${article} из справочника?`)) return
+    await deleteCatalogItem(article)
+    await refresh()
+    maybeQueueSync()
   }
 
   async function onExport() {
@@ -263,6 +489,21 @@ export default function App() {
     }
   }
 
+  function maybeQueueSync() {
+    if (syncSettings.autoSync && syncSettings.scriptUrl) queueBackgroundSync()
+  }
+
+  async function saveSyncForm() {
+    await saveSyncSettings(syncSettings)
+    setSyncMessage('Настройки сохранены')
+  }
+
+  async function runSync(kind: 'sync' | 'pull' | 'push') {
+    setSyncMessage('Синхронизация в фоне — можно продолжать ввод')
+    await saveSyncSettings(syncSettings)
+    queueBackgroundSync(kind)
+  }
+
   async function installApp() {
     if (!installPrompt) return
     await installPrompt.prompt()
@@ -282,12 +523,24 @@ export default function App() {
             <button
               className="icon-btn"
               type="button"
-              aria-label="Резервная копия"
+              aria-label="Настройки"
               onClick={() => setView({ name: 'backup' })}
             >
               <IconGear />
             </button>
           </header>
+
+          <nav className="tab-bar" aria-label="Разделы">
+            <button type="button" className="tab active">
+              Склад
+            </button>
+            <button type="button" className="tab" onClick={() => setView({ name: 'catalog' })}>
+              Справочник
+            </button>
+            <button type="button" className="tab" onClick={() => setView({ name: 'sync' })}>
+              Таблицы
+            </button>
+          </nav>
 
           {showInstall && installPrompt && (
             <div className="install-banner">
@@ -301,15 +554,15 @@ export default function App() {
           <div className="stats-row">
             <div className="stat">
               <strong>{stats.skuCount}</strong>
-              <span>позиций</span>
-            </div>
-            <div className="stat">
-              <strong>{stats.totalPieces}</strong>
               <span>реек</span>
             </div>
             <div className="stat">
               <strong>{stats.cells}</strong>
               <span>ячеек</span>
+            </div>
+            <div className="stat">
+              <strong>{catalog.length}</strong>
+              <span>в справ.</span>
             </div>
           </div>
 
@@ -366,12 +619,10 @@ export default function App() {
                     Ячейка {item.cell} · {formatLength(item.lengthCm)}
                     <br />
                     {formatDate(item.createdAt)}
-                    {item.comment ? ` · ${item.comment.slice(0, 42)}${item.comment.length > 42 ? '…' : ''}` : ''}
+                    {item.comment
+                      ? ` · ${item.comment.slice(0, 42)}${item.comment.length > 42 ? '…' : ''}`
+                      : ''}
                   </p>
-                </div>
-                <div className="qty-badge">
-                  {item.quantity}
-                  <small>шт</small>
                 </div>
               </button>
             ))}
@@ -402,38 +653,29 @@ export default function App() {
           </div>
 
           <form className="form" onSubmit={onSubmit}>
-            <div className="field-row">
-              <div className="field">
-                <label htmlFor="cell">Ячейка</label>
-                <input
-                  id="cell"
-                  inputMode="text"
-                  placeholder="Напр. A-12"
-                  value={form.cell}
-                  onChange={(e) => setForm((f) => ({ ...f, cell: e.target.value }))}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label htmlFor="quantity">Количество</label>
-                <input
-                  id="quantity"
-                  inputMode="numeric"
-                  value={form.quantity}
-                  onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
-                />
-              </div>
+            <div className="field">
+              <label htmlFor="cell">Ячейка</label>
+              <input
+                id="cell"
+                inputMode="text"
+                placeholder="Напр. A-12"
+                value={form.cell}
+                onChange={(e) => setForm((f) => ({ ...f, cell: e.target.value }))}
+                required
+              />
             </div>
 
             <div className="field">
               <label htmlFor="article">Артикул</label>
-              <input
-                id="article"
-                placeholder="Код багета"
+              <ArticleSuggest
                 value={form.article}
-                onChange={(e) => setForm((f) => ({ ...f, article: e.target.value }))}
-                required
+                catalog={catalog}
+                onChange={(article) => {
+                  photoManualRef.current = false
+                  setForm((f) => ({ ...f, article }))
+                }}
               />
+              {catalogHint && <p className="field-hint">{catalogHint}</p>}
             </div>
 
             <div className="field-row">
@@ -467,9 +709,12 @@ export default function App() {
               <input
                 id="photoUrl"
                 type="url"
-                placeholder="https://… ссылка на фото багета"
+                placeholder="Подставится из справочника или введите вручную"
                 value={form.photoUrl}
-                onChange={(e) => setForm((f) => ({ ...f, photoUrl: e.target.value }))}
+                onChange={(e) => {
+                  photoManualRef.current = true
+                  setForm((f) => ({ ...f, photoUrl: e.target.value }))
+                }}
               />
             </div>
 
@@ -516,16 +761,6 @@ export default function App() {
           <p className="detail-line">Ячейка {detail.cell}</p>
           <p className="detail-line">{formatLength(detail.lengthCm)}</p>
 
-          <div className="qty-controls" aria-label="Остаток">
-            <button type="button" onClick={() => onAdjust(detail.id, -1)} aria-label="Минус">
-              −
-            </button>
-            <div className="qty-value">{detail.quantity} шт</div>
-            <button type="button" onClick={() => onAdjust(detail.id, 1)} aria-label="Плюс">
-              +
-            </button>
-          </div>
-
           <div className="kv">
             <div className="kv-row">
               <span>Дата внесения</span>
@@ -564,6 +799,266 @@ export default function App() {
         </div>
       )}
 
+      {view.name === 'catalog' && (
+        <>
+          <div className="screen-header">
+            <button
+              className="icon-btn"
+              type="button"
+              aria-label="Назад"
+              onClick={() => setView({ name: 'list' })}
+            >
+              <IconBack />
+            </button>
+            <h2>Справочник багета</h2>
+          </div>
+
+          <nav className="tab-bar" aria-label="Разделы">
+            <button type="button" className="tab" onClick={() => setView({ name: 'list' })}>
+              Склад
+            </button>
+            <button type="button" className="tab active">
+              Справочник
+            </button>
+            <button type="button" className="tab" onClick={() => setView({ name: 'sync' })}>
+              Таблицы
+            </button>
+          </nav>
+
+          <div className="toolbar">
+            <input
+              className="search-field"
+              type="search"
+              placeholder="Поиск по артикулу или названию…"
+              value={catalogQuery}
+              onChange={(e) => setCatalogQuery(e.target.value)}
+            />
+          </div>
+
+          <section className="list" style={{ paddingBottom: 88 }}>
+            {visibleCatalog.length === 0 && (
+              <div className="empty">
+                <strong>Справочник пуст</strong>
+                Добавьте артикулы с ссылками на фото — или загрузите из Google Таблицы.
+              </div>
+            )}
+            {visibleCatalog.map((item) => (
+              <div key={item.article} className="item-row catalog-row">
+                <button
+                  type="button"
+                  className="catalog-main"
+                  onClick={() => setView({ name: 'catalog-form', article: item.article })}
+                >
+                  <Thumb url={item.photoUrl} article={item.article} />
+                  <div className="item-main">
+                    <h3>{item.article}</h3>
+                    <p className="item-meta">
+                      {item.name || 'Без названия'}
+                      {item.notes ? ` · ${item.notes.slice(0, 40)}` : ''}
+                    </p>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label="Удалить"
+                  onClick={() => onDeleteCatalog(item.article)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </section>
+
+          <button
+            className="fab"
+            type="button"
+            onClick={() => setView({ name: 'catalog-form' })}
+          >
+            + Артикул
+          </button>
+        </>
+      )}
+
+      {view.name === 'catalog-form' && (
+        <>
+          <div className="screen-header">
+            <button
+              className="icon-btn"
+              type="button"
+              aria-label="Назад"
+              onClick={() => setView({ name: 'catalog' })}
+            >
+              <IconBack />
+            </button>
+            <h2>{view.article ? 'Карточка багета' : 'Новый артикул'}</h2>
+          </div>
+
+          <form className="form" onSubmit={onCatalogSubmit}>
+            <div className="field">
+              <label htmlFor="cat-article">Артикул</label>
+              <input
+                id="cat-article"
+                value={catalogForm.article}
+                onChange={(e) => setCatalogForm((f) => ({ ...f, article: e.target.value }))}
+                disabled={Boolean(view.article)}
+                required
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="cat-name">Название</label>
+              <input
+                id="cat-name"
+                placeholder="Напр. Золотой классика 30 мм"
+                value={catalogForm.name}
+                onChange={(e) => setCatalogForm((f) => ({ ...f, name: e.target.value }))}
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="cat-photo">Ссылка на фото</label>
+              <input
+                id="cat-photo"
+                type="url"
+                placeholder="https://…"
+                value={catalogForm.photoUrl}
+                onChange={(e) => setCatalogForm((f) => ({ ...f, photoUrl: e.target.value }))}
+                required
+              />
+            </div>
+            {catalogForm.photoUrl && (
+              <PhotoBlock url={catalogForm.photoUrl} className="photo-preview" />
+            )}
+            <div className="field">
+              <label htmlFor="cat-notes">Примечание</label>
+              <textarea
+                id="cat-notes"
+                value={catalogForm.notes}
+                onChange={(e) => setCatalogForm((f) => ({ ...f, notes: e.target.value }))}
+              />
+            </div>
+            {formError && <p className="error">{formError}</p>}
+            <div className="actions">
+              <button className="btn btn-primary" type="submit">
+                Сохранить в справочник
+              </button>
+            </div>
+          </form>
+        </>
+      )}
+
+      {view.name === 'sync' && (
+        <>
+          <div className="screen-header">
+            <button
+              className="icon-btn"
+              type="button"
+              aria-label="Назад"
+              onClick={() => setView({ name: 'list' })}
+            >
+              <IconBack />
+            </button>
+            <h2>Google Таблицы</h2>
+          </div>
+
+          <nav className="tab-bar" aria-label="Разделы">
+            <button type="button" className="tab" onClick={() => setView({ name: 'list' })}>
+              Склад
+            </button>
+            <button type="button" className="tab" onClick={() => setView({ name: 'catalog' })}>
+              Справочник
+            </button>
+            <button type="button" className="tab active">
+              Таблицы
+            </button>
+          </nav>
+
+          <div className="form">
+            <p className="hint">
+              Синхронизация идёт в фоне: можно сразу вводить следующие рейки. На сервер уходят
+              только изменённые записи, а не весь справочник. После обновления приложения замените
+              код в Apps Script на новый <code>Code.gs</code>.
+            </p>
+
+            <div className="field">
+              <label htmlFor="scriptUrl">URL веб-приложения</label>
+              <input
+                id="scriptUrl"
+                type="url"
+                placeholder="https://script.google.com/macros/s/…/exec"
+                value={syncSettings.scriptUrl}
+                onChange={(e) =>
+                  setSyncSettings((s) => ({ ...s, scriptUrl: e.target.value }))
+                }
+              />
+            </div>
+
+            <div className="field">
+              <label htmlFor="token">Секретный токен</label>
+              <input
+                id="token"
+                type="password"
+                placeholder="Тот же, что в Code.gs"
+                value={syncSettings.token}
+                onChange={(e) => setSyncSettings((s) => ({ ...s, token: e.target.value }))}
+                autoComplete="off"
+              />
+            </div>
+
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={syncSettings.autoSync}
+                onChange={(e) =>
+                  setSyncSettings((s) => ({ ...s, autoSync: e.target.checked }))
+                }
+              />
+              Автосинхронизация в фоне после изменений на складе
+            </label>
+
+            {syncSettings.lastSyncAt && (
+              <p className="hint">Последняя синхронизация: {formatDateTime(syncSettings.lastSyncAt)}</p>
+            )}
+
+            {(syncMessage || syncState.message) && (
+              <p className={syncState.status === 'error' || (syncMessage && !syncMessage.startsWith('Синхронизация') && !syncMessage.startsWith('Готово') && !syncMessage.startsWith('Настройки') && !syncMessage.startsWith('Отправлено')) ? 'error' : 'field-hint'}>
+                {syncState.status === 'syncing'
+                  ? 'Синхронизация в фоне — можно продолжать ввод'
+                  : syncState.status === 'error'
+                    ? syncState.message
+                    : syncMessage || syncState.message}
+              </p>
+            )}
+
+            <div className="actions">
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={() => void runSync('sync')}
+              >
+                {syncState.status === 'syncing' ? 'В фоне…' : 'Синхронизировать'}
+              </button>
+              <button className="btn btn-secondary" type="button" onClick={() => void saveSyncForm()}>
+                Сохранить настройки
+              </button>
+              <button
+                className="btn btn-secondary"
+                type="button"
+                onClick={() => void runSync('pull')}
+              >
+                Только загрузить из таблицы
+              </button>
+              <button
+                className="btn btn-secondary"
+                type="button"
+                onClick={() => void runSync('push')}
+              >
+                Только выгрузить в таблицу
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {view.name === 'backup' && (
         <>
           <div className="screen-header">
@@ -575,19 +1070,51 @@ export default function App() {
             >
               <IconBack />
             </button>
-            <h2>Данные и установка</h2>
+            <h2>Настройки</h2>
           </div>
 
           <div className="form">
+            <p className="hint">Оформление приложения. Выбор сохраняется на этом телефоне.</p>
+            <div className="theme-grid">
+              {THEMES.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`theme-card ${theme === item.id ? 'active' : ''}`}
+                  onClick={() => setTheme(item.id)}
+                >
+                  <span
+                    className="theme-swatch"
+                    style={{
+                      background: `linear-gradient(135deg, ${item.swatchA}, ${item.swatchB})`,
+                    }}
+                  />
+                  <strong>{item.name}</strong>
+                  <span>{item.hint}</span>
+                </button>
+              ))}
+            </div>
+
             <p className="hint">
-              Все остатки хранятся на этом телефоне. Сделайте резервную копию JSON перед сменой
-              устройства.
+              Остатки и справочник хранятся на телефоне. Для обмена с компьютером используйте Google
+              Таблицы или JSON-копию.
             </p>
             <div className="actions">
-              <button className="btn btn-primary" type="button" onClick={onExport}>
-                Экспорт склада
+              <button
+                className="btn btn-primary"
+                type="button"
+                onClick={() => setView({ name: 'sync' })}
+              >
+                Настроить Google Таблицы
               </button>
-              <button className="btn btn-secondary" type="button" onClick={() => fileRef.current?.click()}>
+              <button className="btn btn-secondary" type="button" onClick={onExport}>
+                Экспорт склада (JSON)
+              </button>
+              <button
+                className="btn btn-secondary"
+                type="button"
+                onClick={() => fileRef.current?.click()}
+              >
                 Импорт JSON
               </button>
               <input
@@ -604,8 +1131,8 @@ export default function App() {
             </div>
 
             <p className="hint">
-              Установка на Android: откройте приложение в Chrome → меню ⋮ → «Установить
-              приложение» или «На экран». Работает офлайн после первой загрузки.
+              APK: файл <code>releases/Arama-sklad-debug.apk</code>. Либо Chrome → «Установить
+              приложение».
             </p>
 
             {installPrompt && (
@@ -615,6 +1142,12 @@ export default function App() {
             )}
           </div>
         </>
+      )}
+
+      {(syncState.status === 'syncing' || syncState.status === 'error') && (
+        <div className={`sync-chip ${syncState.status}`} role="status">
+          {syncState.status === 'syncing' ? 'Синхронизация в фоне…' : syncState.message}
+        </div>
       )}
     </div>
   )

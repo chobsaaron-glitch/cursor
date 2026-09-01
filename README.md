@@ -28,4 +28,6 @@ npm install
 npm run dev
 ```
 
-Установка на Android: откройте собранное приложение в Chrome → «Установить приложение». Подробности — в [arama-inventory/README.md](./arama-inventory/README.md).
+**APK для Android:** [arama-inventory/releases/Arama-sklad-debug.apk](./arama-inventory/releases/Arama-sklad-debug.apk)
+
+Подробности — в [arama-inventory/README.md](./arama-inventory/README.md).
