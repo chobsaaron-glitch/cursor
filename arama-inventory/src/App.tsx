@@ -15,7 +15,7 @@ import {
   saveMolding,
   saveSyncSettings,
 } from './db'
-import { syncBidirectional, pullFromSheets, pushToSheets } from './sync'
+import { queueBackgroundSync, subscribeSync, type SyncState } from './sync'
 import type { CatalogItem, Filters, MoldingItem, SyncSettings, View } from './types'
 import { applyTheme, readStoredTheme, THEMES, type ThemeId } from './themes'
 import {
@@ -214,7 +214,11 @@ export default function App() {
     lastSyncAt: '',
     autoSync: false,
   })
-  const [syncBusy, setSyncBusy] = useState(false)
+  const [syncState, setSyncState] = useState<SyncState>({
+    status: 'idle',
+    message: '',
+    lastSyncAt: '',
+  })
   const [syncMessage, setSyncMessage] = useState('')
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [showInstall, setShowInstall] = useState(false)
@@ -225,6 +229,13 @@ export default function App() {
   useEffect(() => {
     applyTheme(theme)
   }, [theme])
+
+  useEffect(() => {
+    return subscribeSync((next) => {
+      setSyncState(next)
+      if (next.status === 'idle' && next.message) void refresh()
+    })
+  }, [])
 
   async function refresh() {
     const [all, cellList, catalogList, settings] = await Promise.all([
@@ -412,14 +423,7 @@ export default function App() {
     }
 
     await refresh()
-    if (syncSettings.autoSync && syncSettings.scriptUrl) {
-      try {
-        await syncBidirectional()
-        await refresh()
-      } catch {
-        // остатки уже сохранены локально
-      }
-    }
+    maybeQueueSync()
     setView({ name: 'detail', itemId: saved.id })
   }
 
@@ -435,6 +439,7 @@ export default function App() {
     }
     await saveCatalogItem(catalogForm)
     await refresh()
+    maybeQueueSync()
     setView({ name: 'catalog' })
   }
 
@@ -442,6 +447,7 @@ export default function App() {
     if (!confirm('Удалить эту запись со склада?')) return
     await deleteMolding(id)
     await refresh()
+    maybeQueueSync()
     setView({ name: 'list' })
   }
 
@@ -449,6 +455,7 @@ export default function App() {
     if (!confirm(`Удалить артикул ${article} из справочника?`)) return
     await deleteCatalogItem(article)
     await refresh()
+    maybeQueueSync()
   }
 
   async function onExport() {
@@ -482,31 +489,19 @@ export default function App() {
     }
   }
 
+  function maybeQueueSync() {
+    if (syncSettings.autoSync && syncSettings.scriptUrl) queueBackgroundSync()
+  }
+
   async function saveSyncForm() {
     await saveSyncSettings(syncSettings)
     setSyncMessage('Настройки сохранены')
   }
 
   async function runSync(kind: 'sync' | 'pull' | 'push') {
-    setSyncBusy(true)
-    setSyncMessage('')
-    try {
-      await saveSyncSettings(syncSettings)
-      const result =
-        kind === 'pull'
-          ? await pullFromSheets()
-          : kind === 'push'
-            ? await pushToSheets()
-            : await syncBidirectional()
-      await refresh()
-      setSyncMessage(
-        `Готово: справочник ${result.catalogCount}, остатки ${result.moldingsCount}`,
-      )
-    } catch (err) {
-      setSyncMessage(err instanceof Error ? err.message : 'Ошибка синхронизации')
-    } finally {
-      setSyncBusy(false)
-    }
+    setSyncMessage('Синхронизация в фоне — можно продолжать ввод')
+    await saveSyncSettings(syncSettings)
+    queueBackgroundSync(kind)
   }
 
   async function installApp() {
@@ -979,8 +974,9 @@ export default function App() {
 
           <div className="form">
             <p className="hint">
-              Синхронизация справочника и остатков с Google Таблицей через Apps Script. Инструкция —
-              в файле <code>google-apps-script/README.md</code> в проекте.
+              Синхронизация идёт в фоне: можно сразу вводить следующие рейки. На сервер уходят
+              только изменённые записи, а не весь справочник. После обновления приложения замените
+              код в Apps Script на новый <code>Code.gs</code>.
             </p>
 
             <div className="field">
@@ -1016,36 +1012,37 @@ export default function App() {
                   setSyncSettings((s) => ({ ...s, autoSync: e.target.checked }))
                 }
               />
-              Автосинхронизация после изменений на складе
+              Автосинхронизация в фоне после изменений на складе
             </label>
 
             {syncSettings.lastSyncAt && (
               <p className="hint">Последняя синхронизация: {formatDateTime(syncSettings.lastSyncAt)}</p>
             )}
 
-            {syncMessage && <p className={syncMessage.startsWith('Готово') ? 'field-hint' : 'error'}>{syncMessage}</p>}
+            {(syncMessage || syncState.message) && (
+              <p className={syncState.status === 'error' || (syncMessage && !syncMessage.startsWith('Синхронизация') && !syncMessage.startsWith('Готово') && !syncMessage.startsWith('Настройки') && !syncMessage.startsWith('Отправлено')) ? 'error' : 'field-hint'}>
+                {syncState.status === 'syncing'
+                  ? 'Синхронизация в фоне — можно продолжать ввод'
+                  : syncState.status === 'error'
+                    ? syncState.message
+                    : syncMessage || syncState.message}
+              </p>
+            )}
 
             <div className="actions">
               <button
                 className="btn btn-primary"
                 type="button"
-                disabled={syncBusy}
                 onClick={() => void runSync('sync')}
               >
-                {syncBusy ? 'Синхронизация…' : 'Синхронизировать'}
+                {syncState.status === 'syncing' ? 'В фоне…' : 'Синхронизировать'}
               </button>
-              <button
-                className="btn btn-secondary"
-                type="button"
-                disabled={syncBusy}
-                onClick={() => void saveSyncForm()}
-              >
+              <button className="btn btn-secondary" type="button" onClick={() => void saveSyncForm()}>
                 Сохранить настройки
               </button>
               <button
                 className="btn btn-secondary"
                 type="button"
-                disabled={syncBusy}
                 onClick={() => void runSync('pull')}
               >
                 Только загрузить из таблицы
@@ -1053,7 +1050,6 @@ export default function App() {
               <button
                 className="btn btn-secondary"
                 type="button"
-                disabled={syncBusy}
                 onClick={() => void runSync('push')}
               >
                 Только выгрузить в таблицу
@@ -1146,6 +1142,12 @@ export default function App() {
             )}
           </div>
         </>
+      )}
+
+      {(syncState.status === 'syncing' || syncState.status === 'error') && (
+        <div className={`sync-chip ${syncState.status}`} role="status">
+          {syncState.status === 'syncing' ? 'Синхронизация в фоне…' : syncState.message}
+        </div>
       )}
     </div>
   )

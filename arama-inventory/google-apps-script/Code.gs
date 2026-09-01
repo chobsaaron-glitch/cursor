@@ -1,5 +1,5 @@
 /**
- * А-рама — синхронизация с Google Таблицами
+ * А-рама — синхронизация с Google Таблицами (быстрый режим)
  *
  * 1. Создайте Google Таблицу (или откройте существующую).
  * 2. Расширения → Apps Script → вставьте этот код.
@@ -8,13 +8,24 @@
  *    - Выполнять от имени: меня
  *    - Доступ: все пользователи
  * 5. Скопируйте URL веб-приложения в настройки приложения «А-рама».
+ *
+ * Важно: после обновления приложения замените скрипт на эту версию.
+ * Синхронизация передаёт только изменённые строки, а не весь справочник.
  */
 
 var SYNC_TOKEN = 'смените-этот-секретный-токен'
 var CATALOG_SHEET = 'Справочник'
 var STOCK_SHEET = 'Остатки'
+var FULL_REWRITE_THRESHOLD = 200
 
 function doPost(e) {
+  var lock = LockService.getScriptLock()
+  try {
+    lock.waitLock(30000)
+  } catch (lockErr) {
+    return json_({ ok: false, error: 'Таблица занята другой синхронизацией, повторите через минуту' })
+  }
+
   try {
     var body = JSON.parse((e && e.postData && e.postData.contents) || '{}')
     if (!body.token || body.token !== SYNC_TOKEN) {
@@ -25,44 +36,67 @@ function doPost(e) {
     var action = body.action || 'sync'
 
     if (action === 'pull') {
+      var catalog = readCatalog_()
+      var moldings = readMoldings_()
       return json_({
         ok: true,
-        catalog: readCatalog_(),
-        moldings: readMoldings_(),
+        catalog: catalog,
+        moldings: moldings,
+        catalogCount: catalog.length,
+        moldingsCount: moldings.length,
       })
     }
 
     if (action === 'push') {
-      writeCatalog_(body.catalog || [])
-      writeMoldings_(body.moldings || [])
+      writeCatalog_(body.catalog || [], true)
+      writeMoldings_(body.moldings || [], true)
+      SpreadsheetApp.flush()
       return json_({
         ok: true,
-        catalog: readCatalog_(),
-        moldings: readMoldings_(),
+        catalogCount: (body.catalog || []).length,
+        moldingsCount: (body.moldings || []).length,
       })
     }
 
-    // sync: merge by updatedAt, then return full state
-    var mergedCatalog = mergeByKey_(
-      readCatalog_(),
-      body.catalog || [],
-      'article',
-    )
-    var mergedMoldings = mergeByKey_(
-      readMoldings_(),
-      body.moldings || [],
-      'id',
-    )
-    writeCatalog_(mergedCatalog)
-    writeMoldings_(mergedMoldings)
+    var beforeCatalog = readCatalog_()
+    var beforeMoldings = readMoldings_()
 
+    var mergedCatalog = mergeByKey_(beforeCatalog, body.catalog || [], 'article')
+    var mergedMoldings = mergeByKey_(beforeMoldings, body.moldings || [], 'id')
+    mergedCatalog = removeKeys_(mergedCatalog, body.deletedCatalog || [], 'article')
+    mergedMoldings = removeKeys_(mergedMoldings, body.deletedMoldings || [], 'id')
+
+    deleteByKeys_(CATALOG_SHEET, body.deletedCatalog || [], 0, 5)
+    deleteByKeys_(STOCK_SHEET, body.deletedMoldings || [], 0, 9)
+
+    var catalogChanged = diffByKey_(beforeCatalog, mergedCatalog, 'article')
+    var moldingChanged = diffByKey_(beforeMoldings, mergedMoldings, 'id')
+    if (catalogChanged.length >= FULL_REWRITE_THRESHOLD) {
+      writeCatalog_(mergedCatalog, true)
+    } else {
+      writeCatalog_(catalogChanged, false)
+    }
+    if (moldingChanged.length >= FULL_REWRITE_THRESHOLD) {
+      writeMoldings_(mergedMoldings, true)
+    } else {
+      writeMoldings_(moldingChanged, false)
+    }
+    SpreadsheetApp.flush()
+
+    var since = body.since || ''
     return json_({
       ok: true,
-      catalog: mergedCatalog,
-      moldings: mergedMoldings,
+      catalog: filterSince_(mergedCatalog, since, body.catalog || [], 'article'),
+      moldings: filterSince_(mergedMoldings, since, body.moldings || [], 'id'),
+      catalogCount: mergedCatalog.length,
+      moldingsCount: mergedMoldings.length,
     })
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message ? err.message : err) })
+  } finally {
+    try {
+      lock.releaseLock()
+    } catch (e) {}
   }
 }
 
@@ -129,14 +163,9 @@ function readCatalog_() {
   return out
 }
 
-function writeCatalog_(items) {
+function writeCatalog_(items, replaceAll) {
   var sheet = ss_().getSheetByName(CATALOG_SHEET)
-  sheet.clearContents()
-  sheet.getRange(1, 1, 1, 5).setValues([
-    ['Артикул', 'Название', 'Фото', 'Примечание', 'Обновлено'],
-  ])
-  if (!items || !items.length) return
-  var rows = items.map(function (item) {
+  var rows = (items || []).map(function (item) {
     return [
       item.article || '',
       item.name || '',
@@ -145,8 +174,17 @@ function writeCatalog_(items) {
       item.updatedAt || new Date().toISOString(),
     ]
   })
-  // getRange(row, column, numRows, numColumns) — 3-й параметр это ЧИСЛО строк
-  sheet.getRange(2, 1, rows.length, 5).setValues(rows)
+  if (replaceAll) {
+    sheet.clearContents()
+    sheet.getRange(1, 1, 1, 5).setValues([
+      ['Артикул', 'Название', 'Фото', 'Примечание', 'Обновлено'],
+    ])
+    if (!rows.length) return
+    sheet.getRange(2, 1, rows.length, 5).setValues(rows)
+    return
+  }
+  if (!rows.length) return
+  upsertRows_(sheet, rows, 0, 5)
 }
 
 function readMoldings_() {
@@ -172,24 +210,9 @@ function readMoldings_() {
   return out
 }
 
-function writeMoldings_(items) {
+function writeMoldings_(items, replaceAll) {
   var sheet = ss_().getSheetByName(STOCK_SHEET)
-  sheet.clearContents()
-  sheet.getRange(1, 1, 1, 9).setValues([
-    [
-      'ID',
-      'Ячейка',
-      'Артикул',
-      'Длина_см',
-      'Количество',
-      'Фото',
-      'Комментарий',
-      'Создано',
-      'Обновлено',
-    ],
-  ])
-  if (!items || !items.length) return
-  var rows = items.map(function (item) {
+  var rows = (items || []).map(function (item) {
     return [
       item.id || '',
       item.cell || '',
@@ -202,7 +225,74 @@ function writeMoldings_(items) {
       item.updatedAt || new Date().toISOString(),
     ]
   })
-  sheet.getRange(2, 1, rows.length, 9).setValues(rows)
+  if (replaceAll) {
+    sheet.clearContents()
+    sheet.getRange(1, 1, 1, 9).setValues([
+      [
+        'ID',
+        'Ячейка',
+        'Артикул',
+        'Длина_см',
+        'Количество',
+        'Фото',
+        'Комментарий',
+        'Создано',
+        'Обновлено',
+      ],
+    ])
+    if (!rows.length) return
+    sheet.getRange(2, 1, rows.length, 9).setValues(rows)
+    return
+  }
+  if (!rows.length) return
+  upsertRows_(sheet, rows, 0, 9)
+}
+
+function upsertRows_(sheet, rows, keyCol, width) {
+  var lastRow = sheet.getLastRow()
+  var existing =
+    lastRow > 1 ? sheet.getRange(2, 1, lastRow - 1, width).getValues() : []
+  var keyToRow = {}
+  for (var i = 0; i < existing.length; i++) {
+    var key = String(existing[i][keyCol] || '').trim()
+    if (key) keyToRow[key] = i + 2
+  }
+
+  var appends = []
+  for (var r = 0; r < rows.length; r++) {
+    var row = rows[r]
+    var k = String(row[keyCol] || '').trim()
+    if (!k) continue
+    var sheetRow = keyToRow[k]
+    if (sheetRow) {
+      sheet.getRange(sheetRow, 1, 1, width).setValues([row])
+    } else {
+      appends.push(row)
+    }
+  }
+  if (appends.length) {
+    sheet.getRange(sheet.getLastRow() + 1, 1, appends.length, width).setValues(appends)
+  }
+}
+
+function deleteByKeys_(sheetName, keys, keyCol, width) {
+  if (!keys || !keys.length) return
+  var keySet = {}
+  for (var i = 0; i < keys.length; i++) {
+    var k = String(keys[i] || '').trim()
+    if (k) keySet[k] = true
+  }
+  var sheet = ss_().getSheetByName(sheetName)
+  var lastRow = sheet.getLastRow()
+  if (lastRow < 2) return
+  var values = sheet.getRange(2, 1, lastRow - 1, width).getValues()
+  var toDelete = []
+  for (var v = 0; v < values.length; v++) {
+    if (keySet[String(values[v][keyCol] || '').trim()]) toDelete.push(v + 2)
+  }
+  for (var d = toDelete.length - 1; d >= 0; d--) {
+    sheet.deleteRow(toDelete[d])
+  }
 }
 
 function mergeByKey_(serverItems, clientItems, keyName) {
@@ -223,6 +313,39 @@ function mergeByKey_(serverItems, clientItems, keyName) {
   ;(clientItems || []).forEach(put)
   return Object.keys(map).map(function (k) {
     return map[k]
+  })
+}
+
+function removeKeys_(items, keys, keyName) {
+  if (!keys || !keys.length) return items
+  var drop = {}
+  for (var i = 0; i < keys.length; i++) drop[String(keys[i])] = true
+  return (items || []).filter(function (item) {
+    return item && !drop[String(item[keyName])]
+  })
+}
+
+function diffByKey_(before, after, keyName) {
+  var prev = {}
+  ;(before || []).forEach(function (item) {
+    if (item && item[keyName]) prev[String(item[keyName])] = item.updatedAt || ''
+  })
+  return (after || []).filter(function (item) {
+    if (!item || !item[keyName]) return false
+    return prev[String(item[keyName])] !== (item.updatedAt || '')
+  })
+}
+
+function filterSince_(items, since, alreadySent, keyName) {
+  var sent = {}
+  ;(alreadySent || []).forEach(function (item) {
+    if (item && item[keyName]) sent[String(item[keyName])] = true
+  })
+  var t = Date.parse(since) || 0
+  return (items || []).filter(function (item) {
+    if (!item || !item[keyName] || sent[String(item[keyName])]) return false
+    if (!since) return true
+    return (Date.parse(item.updatedAt || 0) || 0) > t
   })
 }
 

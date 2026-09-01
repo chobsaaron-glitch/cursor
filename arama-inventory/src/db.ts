@@ -28,10 +28,12 @@ interface AramaDB extends DBSchema {
     key: string
     value: {
       key: string
-      scriptUrl: string
-      token: string
-      lastSyncAt: string
-      autoSync: boolean
+      scriptUrl?: string
+      token?: string
+      lastSyncAt?: string
+      autoSync?: boolean
+      moldings?: string[]
+      catalog?: string[]
     }
   }
 }
@@ -39,6 +41,14 @@ interface AramaDB extends DBSchema {
 const DB_NAME = 'arama-inventory'
 const DB_VERSION = 2
 const SYNC_SETTINGS_KEY = 'syncSettings'
+const PENDING_DELETES_KEY = 'pendingDeletes'
+
+export type PendingDeletes = {
+  moldings: string[]
+  catalog: string[]
+}
+
+const emptyDeletes: PendingDeletes = { moldings: [], catalog: [] }
 
 const defaultSyncSettings: SyncSettings = {
   scriptUrl: '',
@@ -125,6 +135,7 @@ export async function saveMolding(input: MoldingInput): Promise<MoldingItem> {
 export async function deleteMolding(id: string): Promise<void> {
   const db = await getDb()
   await db.delete('moldings', id)
+  await addPendingDelete('moldings', id)
 }
 
 export async function adjustQuantity(id: string, delta: number): Promise<MoldingItem | undefined> {
@@ -239,7 +250,10 @@ export async function saveCatalogItem(input: CatalogInput): Promise<CatalogItem>
 export async function deleteCatalogItem(article: string): Promise<void> {
   const db = await getDb()
   const found = await findCatalogByArticle(article)
-  if (found) await db.delete('catalog', found.article)
+  if (found) {
+    await db.delete('catalog', found.article)
+    await addPendingDelete('catalog', found.article)
+  }
 }
 
 export async function replaceCatalog(items: CatalogItem[]): Promise<void> {
@@ -257,6 +271,101 @@ export async function replaceCatalog(items: CatalogItem[]): Promise<void> {
     })
   }
   await tx.done
+}
+
+function newerThan(since: string, iso: string) {
+  if (!since) return true
+  return (Date.parse(iso) || 0) > (Date.parse(since) || 0)
+}
+
+export async function listChangedMoldings(since: string): Promise<MoldingItem[]> {
+  const items = await listMoldings()
+  return items.filter((item) => newerThan(since, item.updatedAt))
+}
+
+export async function listChangedCatalog(since: string): Promise<CatalogItem[]> {
+  const items = await listCatalog()
+  return items.filter((item) => newerThan(since, item.updatedAt))
+}
+
+export async function upsertMoldings(items: MoldingItem[]): Promise<void> {
+  if (!items.length) return
+  const db = await getDb()
+  const tx = db.transaction('moldings', 'readwrite')
+  for (const raw of items) {
+    if (!raw?.id) continue
+    const incoming: MoldingItem = {
+      id: String(raw.id),
+      cell: String(raw.cell ?? '').trim(),
+      article: normalizeArticle(String(raw.article ?? '')),
+      lengthCm: Number(raw.lengthCm) || 0,
+      quantity: Math.max(0, Math.floor(Number(raw.quantity) || 0)),
+      photoUrl: String(raw.photoUrl ?? '').trim(),
+      comment: String(raw.comment ?? '').trim(),
+      createdAt: String(raw.createdAt ?? nowIso()),
+      updatedAt: String(raw.updatedAt ?? nowIso()),
+    }
+    const existing = await tx.store.get(incoming.id)
+    if (existing && (Date.parse(existing.updatedAt) || 0) > (Date.parse(incoming.updatedAt) || 0)) {
+      continue
+    }
+    await tx.store.put(incoming)
+  }
+  await tx.done
+}
+
+export async function upsertCatalog(items: CatalogItem[]): Promise<void> {
+  if (!items.length) return
+  const db = await getDb()
+  const tx = db.transaction('catalog', 'readwrite')
+  for (const raw of items) {
+    if (!raw?.article) continue
+    const incoming: CatalogItem = {
+      article: normalizeArticle(String(raw.article)),
+      name: String(raw.name ?? '').trim(),
+      photoUrl: String(raw.photoUrl ?? '').trim(),
+      notes: String(raw.notes ?? '').trim(),
+      updatedAt: String(raw.updatedAt ?? nowIso()),
+    }
+    const existing = await tx.store.get(incoming.article)
+    if (existing && (Date.parse(existing.updatedAt) || 0) > (Date.parse(incoming.updatedAt) || 0)) {
+      continue
+    }
+    await tx.store.put(incoming)
+  }
+  await tx.done
+}
+
+export async function getPendingDeletes(): Promise<PendingDeletes> {
+  const db = await getDb()
+  const row = (await db.get('meta', PENDING_DELETES_KEY)) as
+    | (PendingDeletes & { key: string })
+    | undefined
+  if (!row) return { ...emptyDeletes, moldings: [], catalog: [] }
+  return {
+    moldings: Array.isArray(row.moldings) ? row.moldings.map(String) : [],
+    catalog: Array.isArray(row.catalog) ? row.catalog.map(String) : [],
+  }
+}
+
+export async function addPendingDelete(kind: keyof PendingDeletes, id: string): Promise<void> {
+  const current = await getPendingDeletes()
+  const list = current[kind]
+  if (!list.includes(id)) list.push(id)
+  const db = await getDb()
+  await db.put('meta', { key: PENDING_DELETES_KEY, ...current })
+}
+
+export async function clearSentDeletes(sent: PendingDeletes): Promise<void> {
+  const current = await getPendingDeletes()
+  const dropM = new Set(sent.moldings)
+  const dropC = new Set(sent.catalog)
+  const next: PendingDeletes = {
+    moldings: current.moldings.filter((id) => !dropM.has(id)),
+    catalog: current.catalog.filter((id) => !dropC.has(id)),
+  }
+  const db = await getDb()
+  await db.put('meta', { key: PENDING_DELETES_KEY, ...next })
 }
 
 export async function getSyncSettings(): Promise<SyncSettings> {
